@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <polygon points="10.40,13.86 13.80,11.48 10.40,13.28 9.00,14.60" fill="#43454A" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="5.60,13.86 7.00,14.60 5.60,13.28 2.20,11.48" fill="#43454A" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="10.40,13.28 5.60,13.28 7.00,14.60 9.00,14.60" fill="#43454A" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="10.40,2.14 10.40,3.20 13.80,7.07 13.80,4.52" fill="#4E5156" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="5.60,3.20 5.60,2.14 2.20,4.52 2.20,7.07" fill="#686C72" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="7.00,3.95 9.00,3.95 10.40,3.20 10.40,2.14 9.00,1.40 7.00,1.40 5.60,2.14 5.60,3.20" fill="#666A71" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="13.80,7.07 10.40,8.87 10.40,13.28 13.80,11.48" fill="#44464B" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="5.60,13.28 5.60,8.87 2.20,7.07 2.20,11.48" fill="#5D6066" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="10.40,8.87 13.80,7.07 10.40,3.20 9.00,3.95" fill="#5C5F65" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="5.60,3.20 2.20,7.07 5.60,8.87 7.00,3.95" fill="#6E7279" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="5.60,8.87 5.60,13.28 10.40,13.28 10.40,8.87" fill="#56595F" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="9.00,3.95 7.00,3.95 5.60,8.87 10.40,8.87" fill="#696D74" stroke="#CED0D6" stroke-opacity=".6" stroke-width="0.45" stroke-linejoin="round"/>
+  <polygon points="2.20,4.52 5.60,2.15 7.00,1.40 9.00,1.40 10.40,2.15 13.80,4.52 13.80,11.48 10.40,13.86 9.00,14.60 7.00,14.60 5.60,13.86 2.20,11.48" fill="none" stroke="#CED0D6" stroke-width="1" stroke-linejoin="round"/>
+</svg>

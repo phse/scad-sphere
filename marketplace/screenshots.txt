@@ -1,0 +1,6 @@
+# Marketplace-Screenshots: bildname: pfad im Demo-Projekt [dark] [preview|editor] [messages]
+01-preview: phone-stand.scad
+02-messages: coaster.scad messages nocustomizer
+03-stl: coaster.stl
+04-dark: phone-stand.scad dark
+05-3mf-dark: phone-stand.3mf dark

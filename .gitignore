@@ -1,0 +1,18 @@
+.gradle/
+.kotlin/
+build/
+.intellijPlatform/
+.idea/
+*.iml
+out/
+
+local.properties
+.DS_Store
+web/node_modules/
+web/dist/
+
+# Logo-Entwürfe und Auswahlweg bleiben lokal
+marketplace/icon-proposals/
+
+# Roadmap bleibt lokal
+/ROADMAP.md

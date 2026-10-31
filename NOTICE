@@ -1,0 +1,14 @@
+SCAD Sphere
+Copyright 2026 Peter Heck (heck\it, https://heckit.app)
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+"SCAD Sphere", "heck\it" and the SCAD Sphere logo are not licensed under the
+Apache License. They may not be used to identify modified versions or derived
+works without prior written permission.
+
+This product bundles three.js (MIT License, https://github.com/mrdoob/three.js)
+and fflate (MIT License, https://github.com/101arrowz/fflate).
+
+OpenSCAD is a separate application (GPL, https://openscad.org); it is not
+bundled, the plugin runs an installed copy.

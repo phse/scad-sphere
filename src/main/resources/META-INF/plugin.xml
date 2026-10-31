@@ -1,0 +1,125 @@
+<idea-plugin>
+    <id>app.heckit.ide.scadsphere</id>
+    <name>SCAD Sphere</name>
+    <vendor url="https://heckit.app">heck\it</vendor>
+
+    <description><![CDATA[
+<p>
+  <b>OpenSCAD</b> support that stays out of the way: highlighting, navigation and refactoring for <b>.scad</b> files,
+  a live <b>3D preview</b> rendered with your installed OpenSCAD, a <b>Customizer</b> for the parameters, export to every format
+  OpenSCAD writes, and a viewer and converter for <b>.stl</b>, <b>.3mf</b>, <b>.obj</b>, <b>.off</b> and <b>.amf</b> files.
+</p>
+
+<h3>Editing</h3>
+<ul>
+  <li>Highlighting of declarations, calls, parameters, named arguments, special variables (<code>$fn</code>) and modifiers (<code># ! % *</code>).</li>
+  <li>Go to declaration, find usages, rename and highlighting of usages - also across <code>include</code> and <code>use</code>,
+      with the library folders OpenSCAD uses (<code>OPENSCADPATH</code>, the user library folder, own folders).</li>
+  <li>Completion of modules, functions, variables, parameter names and library paths; parameter info.</li>
+  <li>Documentation of the built-in modules and functions with a link to the manual; comments above your own modules.</li>
+  <li>Structure view, folding, commenting, brace matching, indentation and Reformat Code.</li>
+</ul>
+
+<h3>Preview and viewer</h3>
+<ul>
+  <li>Split editor like Markdown: the model renders in the background while you type (or when saved) and keeps its camera.
+      Colors from <code>color()</code> are shown, 2D designs too.</li>
+  <li>Errors, warnings and <code>echo</code> output below the model; click to jump to the line.</li>
+  <li>Views (isometric, top, front, right), colors or one color, edges, orthographic projection, grid and the size of the model in mm.</li>
+  <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change.
+      Convert them to another format (also several at once), or start a new .scad file that imports them.</li>
+</ul>
+
+<h3>Customizer</h3>
+<ul>
+  <li>The parameters of the file next to the preview: sliders, drop-downs, checkboxes and text fields from the same comments
+      the OpenSCAD Customizer reads (<code>// [0:5:100]</code>, <code>// [a, b, c]</code>, <code>/* [Group] */</code>).</li>
+  <li>The preview follows while you drag; the file stays unchanged until you write the values into the code.</li>
+  <li>Parameter sets in the same <code>.json</code> file as the OpenSCAD GUI.</li>
+</ul>
+
+<h3>Export</h3>
+<ul>
+  <li>3MF, STL (binary or ASCII), OBJ, OFF, AMF, SVG, DXF and PDF, with the options your OpenSCAD version offers
+      (colors and unit of a 3MF, paper size of a PDF) and the Customizer values.</li>
+  <li>Export Again to the last file with one click, or open the file in OpenSCAD.</li>
+</ul>
+
+<p>The language support only searches OpenSCAD files: finding usages in PHP, HTML or any other language is never slowed down by it.
+OpenSCAD itself is only needed for the preview, export and conversion.</p>
+
+<p>Works in all JetBrains IDEs based on the IntelliJ Platform (PhpStorm, IntelliJ IDEA, WebStorm, PyCharm, GoLand, ...). UI available in English and German.</p>
+
+<p>Like SCAD Sphere? You can support it via <a href="https://github.com/sponsors/phse">GitHub Sponsors</a> or <a href="https://ko-fi.com/phse_de">buy me a coffee on Ko-fi</a>. More tools at <a href="https://heckit.app">heckit.app</a>.</p>
+
+<p>Missing a feature, have an idea, or just want to share feedback? I would love to hear from you: <a href="mailto:plugin-scad-sphere@heckit.app">plugin-scad-sphere@heckit.app</a>.</p>
+]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.jcef</depends>
+
+    <resource-bundle>messages.ScadSphereBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Fehler- und Freeze-Berichte der Nutzer landen im Marketplace (Reiter Freezes bzw. Errors). -->
+        <errorHandler implementation="com.intellij.diagnostic.JetBrainsMarketplaceErrorReportSubmitter"/>
+
+        <fileType name="heckit.OpenSCAD" language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadFileType"
+                  fieldName="INSTANCE" extensions="scad"/>
+        <fileType name="heckit.STL" implementationClass="app.heckit.ide.scadsphere.lang.StlFileType" fieldName="INSTANCE" extensions="stl"/>
+        <fileType name="heckit.3MF" implementationClass="app.heckit.ide.scadsphere.lang.ThreeMfFileType" fieldName="INSTANCE" extensions="3mf"/>
+        <fileType name="heckit.OBJ" implementationClass="app.heckit.ide.scadsphere.lang.ObjFileType" fieldName="INSTANCE" extensions="obj"/>
+        <fileType name="heckit.OFF" implementationClass="app.heckit.ide.scadsphere.lang.OffFileType" fieldName="INSTANCE" extensions="off"/>
+        <fileType name="heckit.AMF" implementationClass="app.heckit.ide.scadsphere.lang.AmfFileType" fieldName="INSTANCE" extensions="amf"/>
+
+        <lang.parserDefinition language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadParserDefinition"/>
+        <lang.syntaxHighlighterFactory language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadSyntaxHighlighterFactory"/>
+        <colorSettingsPage implementation="app.heckit.ide.scadsphere.lang.ScadColorSettingsPage"/>
+        <annotator language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadAnnotator"/>
+        <lang.braceMatcher language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadBraceMatcher"/>
+        <lang.commenter language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadCommenter"/>
+        <lang.quoteHandler language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadQuoteHandler"/>
+        <lang.foldingBuilder language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadFoldingBuilder"/>
+        <lang.findUsagesProvider language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadFindUsagesProvider"/>
+        <lang.refactoringSupport language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadRefactoringSupportProvider"/>
+        <lang.namesValidator language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadNamesValidator"/>
+        <lang.psiStructureViewFactory language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadStructureViewFactory"/>
+        <lang.documentationProvider language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadDocumentationProvider"/>
+        <lang.formatter language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadFormattingModelBuilder"/>
+        <langCodeStyleSettingsProvider implementation="app.heckit.ide.scadsphere.lang.ScadCodeStyleSettingsProvider"/>
+        <completion.contributor language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadCompletionContributor"/>
+        <codeInsight.parameterInfo language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadParameterInfoHandler"/>
+        <lang.elementManipulator forClass="app.heckit.ide.scadsphere.psi.ScadImportStatement"
+                                 implementationClass="app.heckit.ide.scadsphere.psi.ScadImportManipulator"/>
+        <indexPatternBuilder implementation="app.heckit.ide.scadsphere.lang.ScadIndexPatternBuilder"/>
+
+        <fileEditorProvider implementation="app.heckit.ide.scadsphere.editor.ScadSplitEditorProvider"/>
+        <fileEditorProvider implementation="app.heckit.ide.scadsphere.editor.ModelFileEditorProvider"/>
+
+        <applicationConfigurable parentId="tools" id="app.heckit.ide.scadsphere" instance="app.heckit.ide.scadsphere.ScadSphereConfigurable"
+                                 key="settings.title" bundle="messages.ScadSphereBundle"/>
+        <postStartupActivity implementation="app.heckit.ide.scadsphere.ScreenshotStarter"/>
+        <notificationGroup id="SCAD Sphere" displayType="BALLOON" key="notification.group" bundle="messages.ScadSphereBundle"/>
+    </extensions>
+
+    <actions>
+        <!-- Neu rechnen und Abbrechen: in der Leiste des Viewers, hier für Tastenkürzel und Find Action -->
+        <action id="ScadSphere.Render" class="app.heckit.ide.scadsphere.editor.RenderAction"/>
+        <action id="ScadSphere.StopRender" class="app.heckit.ide.scadsphere.editor.StopRenderAction"/>
+        <action id="ScadSphere.ExportAgain" class="app.heckit.ide.scadsphere.export.ExportAgainAction"/>
+        <action id="ScadSphere.ToggleCustomizer" class="app.heckit.ide.scadsphere.customizer.ToggleCustomizerAction"/>
+        <group id="ScadSphere.FileActions">
+            <group id="ScadSphere.Export" class="app.heckit.ide.scadsphere.export.ExportGroup" popup="true"/>
+            <action id="ScadSphere.OpenInOpenScad" class="app.heckit.ide.scadsphere.editor.OpenInOpenScadAction"/>
+            <group id="ScadSphere.Convert" class="app.heckit.ide.scadsphere.export.ConvertGroup" popup="true"/>
+            <action id="ScadSphere.NewScadFromModel" class="app.heckit.ide.scadsphere.export.NewScadFromModelAction"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
+        </group>
+        <!-- Werkzeugleiste über der 3D-Ansicht von Modelldateien -->
+        <group id="ScadSphere.ModelToolbar">
+            <reference ref="ScadSphere.Convert"/>
+            <reference ref="ScadSphere.NewScadFromModel"/>
+        </group>
+    </actions>
+</idea-plugin>
