@@ -2,7 +2,7 @@
 
 <img src="marketplace/plugin-icon.png" width="360" alt="SCAD Sphere icon for light and dark themes">
 
-Plugin ID `app.heckit.ide.scadsphere` · Vendor heck\it ([heckit.app](https://heckit.app)) · Source: https://github.com/phse/scad-sphere · Support: [GitHub Sponsors](https://github.com/sponsors/phse) or [Ko-fi](https://ko-fi.com/phse_de) · Feedback and feature requests: [plugin-scad-sphere@heckit.app](mailto:plugin-scad-sphere@heckit.app)
+Plugin ID `app.heckit.ide.scadsphere` · Vendor heck\it ([heckit.app](https://heckit.app)) · [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/35691-scad-sphere) · Source: https://github.com/phse/scad-sphere · Support: [GitHub Sponsors](https://github.com/sponsors/phse) or [Ko-fi](https://ko-fi.com/phse_de) · Feedback and feature requests: [plugin-scad-sphere@heckit.app](mailto:plugin-scad-sphere@heckit.app)
 
 ![SCAD Sphere](marketplace/screenshots/01-preview.png)
 
@@ -95,9 +95,10 @@ The UI is available in English and German.
 
 ## Installation
 
-Not yet on the JetBrains Marketplace. Build the ZIP (see below) and install it via
-*Settings | Plugins | ⚙ | Install Plugin from Disk…*. Other OpenSCAD plugins also claim `.scad` files; disable them
-to avoid the file type conflict.
+In the IDE, go to *Settings | Plugins | Marketplace* and search for **SCAD Sphere**, or use the
+[Marketplace page](https://plugins.jetbrains.com/plugin/35691-scad-sphere). Bugs and ideas are
+welcome as [GitHub issues](https://github.com/phse/scad-sphere/issues). Other OpenSCAD plugins also claim `.scad`
+files; disable them to avoid the file type conflict.
 
 ## Build and run
 
