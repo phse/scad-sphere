@@ -28,7 +28,7 @@ import javax.swing.JFrame
  * Erzeugt Screenshots in der Sandbox-IDE (./gradlew runIde -Pscreenshots=...). Zeichnet den Frame selbst in ein
  * Bild, braucht also keine Bildschirmaufnahme-Rechte. Welche Dateien, steht in marketplace/screenshots.txt
  * (bzw. `screenshots.txt` im Projekt bei -PscreenshotProject), je Zeile
- * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl]` (`set:` ändert
+ * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:x,y,z;x,y,z]` (`set:` ändert
  * Customizer-Werte, `export:` nimmt zusätzlich den Export-Dialog für das Format auf, als `bildname-dialog.png`).
  * Ist nur in Builds mit -Pscreenshots enthalten.
  */
@@ -95,6 +95,18 @@ object ScreenshotMaker {
                     scroll?.verticalScrollBar?.let { it.value = it.maximum }
                 }
                 Thread.sleep(500)
+            }
+            // section:x:0.5[:flip] und measure:x,y,z;x,y,z stellen den Viewer ein
+            val section = words.firstOrNull { it.startsWith("section:") }?.split(':')
+            val measure = words.firstOrNull { it.startsWith("measure:") }?.removePrefix("measure:")
+                ?.split(';')?.map { point -> point.split(',').map { it.toDouble() } }
+            if (section != null || measure != null) {
+                edt {
+                    val preview = FileEditorManager.getInstance(project).getEditors(file).filterIsInstance<ScadSplitEditor>().firstOrNull()?.preview
+                    section?.let { preview?.invokeViewer("setSection", mapOf("axis" to it[1], "fraction" to it[2].toDouble(), "flip" to (it.getOrNull(3) == "flip"))) }
+                    measure?.let { preview?.invokeViewer("setMeasure", it) }
+                }
+                Thread.sleep(800)
             }
             if ("messages" in words) {
                 edt { FileEditorManager.getInstance(project).getEditors(file).filterIsInstance<ScadSplitEditor>().firstOrNull()?.preview?.expandMessages() }

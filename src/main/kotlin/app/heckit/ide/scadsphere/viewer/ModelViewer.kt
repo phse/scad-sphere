@@ -1,6 +1,8 @@
 package app.heckit.ide.scadsphere.viewer
 
 import app.heckit.ide.scadsphere.ScadSphereBundle
+import app.heckit.ide.scadsphere.ScadSphereSettings
+import app.heckit.ide.scadsphere.ViewerSettingsListener
 import app.heckit.ide.scadsphere.render.RenderMessage
 import com.google.gson.Gson
 import com.google.gson.JsonParser
@@ -42,8 +44,9 @@ class ModelViewer(parent: Disposable) : Disposable {
     private val query: JBCefJSQuery? = browser?.let { JBCefJSQuery.create(it as JBCefBrowserBase) }
     private val gson = Gson()
 
+    /** Modell und ggf. die #/%-Teile (3MF), abrufbar unter `model/<id>` */
     @Volatile
-    private var model: Pair<String, ByteArray>? = null
+    private var models: Map<String, ByteArray> = emptyMap()
     private val modelCounter = AtomicInteger()
 
     /** JavaScript-Aufrufe, bis die Seite bereit ist. */
@@ -70,20 +73,28 @@ class ModelViewer(parent: Disposable) : Disposable {
                 ApplicationManager.getApplication().invokeLater({ onMessage(request) }, { disposed })
                 JBCefJSQuery.Response("")
             }
-            browser.jbCefClient.addRequestHandler(ViewerResources(::initScript) { id -> model?.takeIf { it.first == id }?.second }, browser.cefBrowser)
+            browser.jbCefClient.addRequestHandler(ViewerResources(::initScript) { id -> models[id] }, browser.cefBrowser)
             browser.jbCefClient.addContextMenuHandler(NoContextMenu, browser.cefBrowser)
             val connection = ApplicationManager.getApplication().messageBus.connect(this)
             connection.subscribe(LafManagerListener.TOPIC, LafManagerListener { applyTheme() })
             connection.subscribe(EditorColorsManager.TOPIC, EditorColorsListener { applyTheme() })
+            connection.subscribe(ViewerSettingsListener.TOPIC, ViewerSettingsListener { call("setBed", ScadSphereSettings.bed()) })
             browser.loadURL(ViewerResources.START_URL)
         }
     }
 
     /** Modell anzeigen; [format]: `stl`, `3mf`, `obj`, `off`, `amf` oder `svg` (2D von OpenSCAD). [keepCamera]: Blickwinkel behalten. */
-    fun showModel(bytes: ByteArray, format: String, keepCamera: Boolean) {
-        val id = "${modelCounter.incrementAndGet()}.$format"
-        model = id to bytes
-        call("load", mapOf("url" to "${ViewerResources.ORIGIN}/model/$id", "format" to format, "keepCamera" to keepCamera))
+    fun showModel(bytes: ByteArray, format: String, keepCamera: Boolean, overlay: ByteArray? = null) {
+        val number = modelCounter.incrementAndGet()
+        val id = "$number.$format"
+        val overlayId = "$number-overlay.3mf"
+        models = if (overlay != null) mapOf(id to bytes, overlayId to overlay) else mapOf(id to bytes)
+        call("load", mapOf(
+            "url" to "${ViewerResources.ORIGIN}/model/$id",
+            "format" to format,
+            "keepCamera" to keepCamera,
+            "overlayUrl" to overlay?.let { "${ViewerResources.ORIGIN}/model/$overlayId" },
+        ))
     }
 
     /** Kleiner Hinweis oben links mit Ladekreis (z. B. „Rechnet…“); null blendet ihn aus. */
@@ -91,7 +102,7 @@ class ModelViewer(parent: Disposable) : Disposable {
 
     /** Hinweis statt Modell, optional mit Link, der [onAction] mit [action] auslöst. */
     fun showEmpty(text: String, linkLabel: String? = null, action: String? = null, keepModel: Boolean = false) {
-        if (!keepModel) model = null
+        if (!keepModel) models = emptyMap()
         val link = if (linkLabel != null && action != null) mapOf("label" to linkLabel, "action" to action) else null
         call("showEmpty", mapOf("text" to text, "link" to link, "keepModel" to keepModel))
     }
@@ -102,6 +113,9 @@ class ModelViewer(parent: Disposable) : Disposable {
      */
     fun setTools(rendering: Boolean, customizerShown: Boolean, customizerEnabled: Boolean) =
         call("setTools", mapOf("render" to true, "rendering" to rendering, "customizer" to customizerShown, "customizerEnabled" to customizerEnabled))
+
+    /** Beliebigen Aufruf an `window.scadSphere` schicken (Screenshots, Tests), z. B. `setSection` mit Argument. */
+    fun invoke(function: String, argument: Any?) = call(function, argument)
 
     /** Meldungsliste aufklappen (von selbst nur bei Fehlern). */
     fun expandMessages() = call("expandMessages", null)
@@ -154,6 +168,7 @@ class ModelViewer(parent: Disposable) : Disposable {
             "labels" to labels(),
             "theme" to theme(),
             "locale" to Locale.getDefault().toLanguageTag(),
+            "bed" to ScadSphereSettings.bed(),
         )
         val send = query?.inject("JSON.stringify(message)") ?: ""
         return """
@@ -166,6 +181,9 @@ class ModelViewer(parent: Disposable) : Disposable {
         "tool.fit", "tool.iso", "tool.top", "tool.front", "tool.right", "tool.colors", "tool.colors.none", "tool.edges", "tool.ortho", "tool.grid",
         "tool.render", "tool.stop", "tool.customizer", "tool.customizer.none",
         "messages.error", "messages.warning", "messages.echo", "triangles", "parseError", "noWebGl",
+        "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.section", "tool.section.none",
+        "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
+        "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
     ).associateWith { ScadSphereBundle.message("viewer.$it") }
 
     private fun applyTheme() {

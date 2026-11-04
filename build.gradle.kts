@@ -89,6 +89,19 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.0.0</h3>
+            <ul>
+              <li>First stable release.</li>
+              <li>Errors and warnings of the last OpenSCAD run at their line in the code; unknown modules and functions
+                  and missing <code>include</code>/<code>use</code> files are marked while you type.</li>
+              <li>Print bed: outline in the 3D view (size, origin and presets for common printers in the settings) and a
+                  warning when the model does not fit.</li>
+              <li>Parts marked with <code>#</code> and <code>%</code> appear transparent, like in OpenSCAD's own preview.</li>
+              <li>Measure distances between two points and a section view along X, Y or Z.</li>
+              <li>New toolbar: views and display options in menus, bottom, left and back views, tooltips, and a » menu
+                  when the preview is narrow.</li>
+              <li>Fixed: an <code>assert</code> that fails is reported as an error instead of an empty model.</li>
+            </ul>
             <h3>0.1.0</h3>
             <ul>
               <li>First release: OpenSCAD language support (highlighting, navigation across <code>include</code>/<code>use</code>,

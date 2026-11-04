@@ -4,6 +4,7 @@ import app.heckit.ide.scadsphere.export.ExportFormat
 import app.heckit.ide.scadsphere.render.ExportOptions
 import app.heckit.ide.scadsphere.render.OpenScad
 import app.heckit.ide.scadsphere.render.OpenScadRender
+import app.heckit.ide.scadsphere.render.RenderMessage
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -77,5 +78,26 @@ class OpenScadExportTest : BasePlatformTestCase() {
         val missing = OpenScadRender(exe).convert(File(dir, "missing.stl"), obj, ExportOptions(), EmptyProgressIndicator())
         assertFalse(missing.ok)
         assertFalse(obj.exists())
+    }
+
+    fun testRenderMessagesOnceAndAssertIsNotEmpty() {
+        val exe = exe() ?: return
+        val source = File(dir, "assert.scad").apply { writeText("echo(\"hi\");\nassert(false, \"boom\");\ncube(1);\n") }
+        val result = OpenScadRender(exe).render(source, null)
+        assertEquals(1, result.messages.count { it.level == RenderMessage.Level.ERROR })
+        assertEquals(1, result.messages.count { it.level == RenderMessage.Level.ECHO })
+        assertTrue(result.failed)
+        assertFalse(result.empty)
+    }
+
+    fun testOverlayForHighlightedParts() {
+        val exe = exe() ?: return
+        val source = File(dir, "marked.scad").apply {
+            writeText("echo(\"x\");\nmodule h() #cylinder(d = 2, h = 20, center = true);\ndifference() { cube(10, center = true); h(); }\n")
+        }
+        val result = OpenScadRender(exe).render(source, null)
+        assertNotNull(result.overlay)
+        assertEquals(1, result.messages.count { it.level == RenderMessage.Level.ECHO })
+        assertNull(OpenScadRender(exe).render(File(dir, "plain.scad").apply { writeText("cube(1);") }, null).overlay)
     }
 }

@@ -16,6 +16,8 @@
   <li>Go to declaration, find usages, rename and highlighting of usages - also across <code>include</code> and <code>use</code>,
       with the library folders OpenSCAD uses (<code>OPENSCADPATH</code>, the user library folder, own folders).</li>
   <li>Completion of modules, functions, variables, parameter names and library paths; parameter info.</li>
+  <li>Errors and warnings of the last OpenSCAD run at their line in the code; unknown modules and functions and missing
+      <code>include</code>/<code>use</code> files are marked while you type.</li>
   <li>Documentation of the built-in modules and functions with a link to the manual; comments above your own modules.</li>
   <li>Structure view, folding, commenting, brace matching, indentation and Reformat Code.</li>
 </ul>
@@ -26,6 +28,9 @@
       Colors from <code>color()</code> are shown, 2D designs too.</li>
   <li>Errors, warnings and <code>echo</code> output below the model; click to jump to the line.</li>
   <li>Views (isometric, top, front, right), colors or one color, edges, orthographic projection, grid and the size of the model in mm.</li>
+  <li>Parts marked with <code>#</code> and <code>%</code> appear transparent, like in OpenSCAD's own preview.</li>
+  <li>Print bed outline (size and origin configurable, presets for common printers) and a warning when the model does not fit.</li>
+  <li>Measure distances between two points (snaps to corners) and a section view along X, Y or Z.</li>
   <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change.
       Convert them to another format (also several at once), or start a new .scad file that imports them.</li>
 </ul>
@@ -76,6 +81,7 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <lang.syntaxHighlighterFactory language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadSyntaxHighlighterFactory"/>
         <colorSettingsPage implementation="app.heckit.ide.scadsphere.lang.ScadColorSettingsPage"/>
         <annotator language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadAnnotator"/>
+        <annotator language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadRenderAnnotator"/>
         <lang.braceMatcher language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadBraceMatcher"/>
         <lang.commenter language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadCommenter"/>
         <lang.quoteHandler language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadQuoteHandler"/>

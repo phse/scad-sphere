@@ -55,6 +55,27 @@ object ScadImports {
             )
         }
 
+    /**
+     * Alle include/use der Datei (auch in eingebundenen Dateien) sind auffindbar. Sonst kann ein Name aus einer
+     * fehlenden Bibliothek stammen - unbekannte Namen werden dann nicht angemerkt.
+     */
+    fun allImportsFound(file: ScadFile): Boolean =
+        CachedValuesManager.getCachedValue(file) {
+            CachedValueProvider.Result.create(
+                allFound(file, mutableSetOf()),
+                PsiModificationTracker.getInstance(file.project),
+                VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS,
+            )
+        }
+
+    private fun allFound(file: ScadFile, visited: MutableSet<VirtualFile>): Boolean {
+        file.originalFile.virtualFile?.let { if (!visited.add(it)) return true }
+        return file.imports.all { statement ->
+            val target = importedFile(statement) ?: return@all false
+            allFound(target, visited)
+        }
+    }
+
     private fun computeImported(file: ScadFile): List<ScadNamedElement> {
         val visited = mutableSetOf<VirtualFile>()
         file.originalFile.virtualFile?.let(visited::add)

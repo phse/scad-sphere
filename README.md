@@ -34,6 +34,10 @@ loop or `let` it lives in).
 - **Documentation** (F1 / Ctrl+Q, also on hover): built-in modules and functions with signature, description
   and a link to the OpenSCAD manual; own modules, functions and variables with their signature and the comment
   above them (or after them on the same line, as for Customizer variables).
+- **Problems in the code**: errors and warnings of the last OpenSCAD run (from the preview) are shown at their line
+  and move with the text until the next run, also in included files that are open. Unknown modules and functions are
+  marked as weak warnings while you type (not while an `include`/`use` file is missing), missing `include`/`use`
+  files as warnings.
 - Structure view, folding (blocks, comments, long vectors), comment/uncomment, brace matching, TODO comments.
 - Indentation on Enter and **Reformat Code** (indentation only; spacing within lines stays as written).
   Indent size in *Settings | Editor | Code Style | OpenSCAD*.
@@ -50,6 +54,9 @@ loop or `let` it lives in).
   The camera stays where it is when the model changes.
 - Errors, warnings and `echo` output appear at the bottom right of the preview; a click on `file.scad:12` opens
   that line. On errors the last model stays visible.
+- Parts marked with `#` (highlight) and `%` (background) are shown transparent in red and grey, as in OpenSCAD's own
+  preview. OpenSCAD does not export them, so a second run reads the CSG tree (`-o tree.csg`), keeps only these parts
+  with the transforms above them and renders them separately; it only starts when the code contains `#` or `%`.
 - Editor toolbar: **Export with OpenSCAD ▸** and **Open in OpenSCAD** (also in the project tree and the editor tab
   menu). Render again (stop while rendering) and the Customizer button sit at the right end of the viewer toolbar.
 
@@ -79,8 +86,14 @@ loop or `let` it lives in).
 **Viewer** (`.stl` binary and ASCII, `.3mf`, `.obj`, `.off`, `.amf`; also used for the preview)
 
 - Rotate with the left mouse button, pan with the right one, zoom with the wheel (towards the cursor).
-- Views: fit, isometric, top, front, right. Colors (or everything in one color), edges, orthographic projection and
-  the grid can be toggled.
+- Toolbar: fit, *Views* (isometric, top, bottom, front, right, left, back), *Display* (colors or one color, edges,
+  orthographic projection, grid, print bed), measure, section; in the preview also render again and the Customizer.
+  Groups open on hover; in a narrow preview less important buttons move into a » menu.
+- **Print bed**: outline of the build plate on the grid; when the model is larger (or, with the origin in the front
+  left corner, partly outside the bed or below z = 0), the outline turns orange and a warning appears next to the size.
+- **Measure**: click two points on the model (corners snap within 12 px); shows the distance and Δx/Δy/Δz.
+  Esc clears the measurement.
+- **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled.
 - Size of the model in mm (bounding box) and the number of triangles at the bottom left.
 - Files reload when they change on disk (e.g. after an export).
 - **Convert To ▸** (toolbar above the model, project tree, also for several files): OpenSCAD imports the model and
@@ -89,7 +102,7 @@ loop or `let` it lives in).
 
 **Settings** (*Settings | Tools | SCAD Sphere*): path to OpenSCAD (found automatically in the usual places of
 macOS, Windows and Linux), additional library folders, when to render, pause before rendering, preview shown on
-opening.
+opening, print bed (size, presets for common printers, origin in the center or the front left corner).
 
 The UI is available in English and German.
 
@@ -152,7 +165,7 @@ The Marketplace description lives in `src/main/resources/META-INF/plugin.xml`, t
 
 Copies `marketplace/demo-project` to `/Users/Shared/scad-demo` (so no user path shows up in the images), opens it in
 the sandbox and writes the PNGs listed in `marketplace/screenshots.txt` (file, theme, layout, `nocustomizer`,
-Customizer values as `set:name=value` per line). The IDE
+Customizer values as `set:name=value`, a section as `section:x:0.5[:flip]`, a measurement as `measure:x,y,z;x,y,z` per line). The IDE
 paints its own window for this, no screen recording permission is needed. OpenSCAD must be installed for the
 preview. The helper lives in `src/screenshot/` and is only compiled with `-Pscreenshots`, never into a release.
 Close any running sandbox first, and close the sandbox afterwards. `-PscreenshotProject=<folder>` uses another
@@ -171,6 +184,8 @@ project with its own `screenshots.txt`.
 | `lang/ScadBuiltins.kt` | Built-in modules, functions and special variables with signatures and descriptions |
 | `lang/ScadCompletion.kt`, `ScadDocumentation.kt`, `ScadParameterInfo.kt` | Completion, quick documentation, parameter info |
 | `lang/ScadFormatting.kt` | Indentation-only formatter and code style settings |
+| `render/RenderMessages.kt`, `lang/ScadRenderAnnotator.kt` | Messages of the last run per preview, as range markers, shown as annotations in the code |
+| `render/CsgOverlay.kt` | Parts with `#`/`%` from OpenSCAD's CSG tree, with the transforms above them, for the second run |
 | `render/OpenScad.kt`, `OpenScadRender.kt` | Finding OpenSCAD and what it can export, running it (stdin, working directory, `OPENSCADPATH`, `-D`, `-O`), messages, dependencies, export, conversion via `import()` |
 | `customizer/ScadCustomizer.kt` | Customizer parameters after OpenSCAD's rules (tested against OpenSCAD's own `-o file.param`), values, `-D` arguments |
 | `customizer/CustomizerPanel.kt`, `ParameterSets.kt` | The panel next to the preview; parameter sets in OpenSCAD's `<file>.json` |

@@ -1,6 +1,10 @@
 package app.heckit.ide.scadsphere.lang
 
+import app.heckit.ide.scadsphere.ScadSphereBundle
 import app.heckit.ide.scadsphere.psi.ScadArgument
+import app.heckit.ide.scadsphere.psi.ScadFile
+import app.heckit.ide.scadsphere.psi.ScadImportStatement
+import app.heckit.ide.scadsphere.psi.ScadImports
 import app.heckit.ide.scadsphere.psi.ScadCallableDeclaration
 import app.heckit.ide.scadsphere.psi.ScadFunctionDeclaration
 import app.heckit.ide.scadsphere.psi.ScadModuleCall
@@ -27,6 +31,7 @@ class ScadAnnotator : Annotator {
             }
             is ScadModuleCall -> annotateModuleCall(element, holder)
             is ScadReferenceExpression -> annotateReference(element, holder)
+            is ScadImportStatement -> annotateImport(element, holder)
         }
     }
 
@@ -45,6 +50,18 @@ class ScadAnnotator : Annotator {
             else -> ScadColors.MODULE_CALL
         }
         holder.color(name, key)
+        if (!resolved && key == ScadColors.MODULE_CALL && ScadImports.allImportsFound(call.containingFile as ScadFile)) {
+            holder.unknown(name, ScadSphereBundle.message("annotation.unknownModule", name.text))
+        }
+    }
+
+    private fun annotateImport(statement: ScadImportStatement, holder: AnnotationHolder) {
+        val path = statement.path ?: return
+        val range = statement.pathRange ?: return
+        if (path.isBlank() || ScadImports.importedFile(statement) != null) return
+        holder.newAnnotation(HighlightSeverity.WARNING, ScadSphereBundle.message("annotation.fileNotFound", path))
+            .range(range.shiftRight(statement.textRange.startOffset))
+            .create()
     }
 
     private fun annotateReference(reference: ScadReferenceExpression, holder: AnnotationHolder) {
@@ -60,6 +77,15 @@ class ScadAnnotator : Annotator {
             else -> null
         }
         key?.let { holder.color(reference, it) }
+        if (reference.isCallee && targets.isEmpty() && ScadBuiltins.function(name) == null &&
+            ScadImports.allImportsFound(reference.containingFile as ScadFile)
+        ) {
+            holder.unknown(reference, ScadSphereBundle.message("annotation.unknownFunction", name))
+        }
+    }
+
+    private fun AnnotationHolder.unknown(element: PsiElement, message: String) {
+        newAnnotation(HighlightSeverity.WEAK_WARNING, message).range(element).create()
     }
 
     /** `$fn` & Co. */

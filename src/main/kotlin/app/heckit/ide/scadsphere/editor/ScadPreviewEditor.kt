@@ -15,6 +15,7 @@ import app.heckit.ide.scadsphere.lang.ScadFileType
 import app.heckit.ide.scadsphere.psi.ScadFile
 import app.heckit.ide.scadsphere.render.OpenScad
 import app.heckit.ide.scadsphere.render.OpenScadRender
+import app.heckit.ide.scadsphere.render.RenderMessages
 import app.heckit.ide.scadsphere.render.RenderResult
 import app.heckit.ide.scadsphere.viewer.ModelViewer
 import com.intellij.ide.BrowserUtil
@@ -175,6 +176,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         val run = ++generation
         val unsaved = document != null && FileDocumentManager.getInstance().isDocumentUnsaved(document)
         val text = if (unsaved) document.text else null
+        val stamp = document?.modificationStamp
         val source = File(file.path)
         viewer.setStatus(ScadSphereBundle.message("preview.rendering"))
         updateTools()
@@ -185,7 +187,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
                 current = null
                 viewer.setStatus(null)
                 updateTools()
-                result.onSuccess(::show).onFailure {
+                result.onSuccess { show(it, stamp) }.onFailure {
                     viewer.showEmpty(ScadSphereBundle.message("preview.error", it.message ?: it.javaClass.simpleName), keepModel = hasModel)
                 }
             }, { disposed })
@@ -193,6 +195,9 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     }
 
     fun expandMessages() = viewer.expandMessages()
+
+    /** Aufruf an den Viewer (Screenshot-Helfer). */
+    fun invokeViewer(function: String, argument: Any?) = viewer.invoke(function, argument)
 
     fun cancel() {
         generation++
@@ -202,14 +207,15 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         updateTools()
     }
 
-    private fun show(result: RenderResult) {
+    private fun show(result: RenderResult, stamp: Long?) {
         if (result.cancelled) return
         dependencies = result.dependencies
         viewer.setMessages(result.messages)
+        RenderMessages.getInstance(project).update(file, result.messages, stamp)
         val bytes = result.bytes
         when {
             bytes != null -> {
-                viewer.showModel(bytes, result.format, keepCamera = hasModel)
+                viewer.showModel(bytes, result.format, keepCamera = hasModel, overlay = result.overlay)
                 hasModel = true
                 file.putUserData(ExportFormat.LAST_RENDER_FORMAT, result.format)
             }
@@ -249,6 +255,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     override fun dispose() {
         disposed = true
         current?.cancel()
+        RenderMessages.getInstance(project).clear(file)
     }
 
     private companion object {

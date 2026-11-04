@@ -17,6 +17,8 @@ class RenderResult(
     /** Modell (3MF) oder 2D-Zeichnung (SVG); null bei Fehlern oder ohne Geometrie */
     val bytes: ByteArray?,
     val format: String,
+    /** Teile mit # und % als eigenes 3MF (rot bzw. grau), siehe [CsgOverlay] */
+    val overlay: ByteArray? = null,
     val messages: List<RenderMessage>,
     /** OpenSCAD hat ohne Ergebnis aufgehört (Syntaxfehler, assert, …) */
     val failed: Boolean,
@@ -71,8 +73,10 @@ class OpenScadRender(private val exe: String) {
             }
             val output = run.target
             val bytes = output.takeIf { !cancelled && it.isFile && it.length() > 0 }?.readBytes()
+            val overlay = if (bytes != null && output.extension == "3mf") overlay(file, text, dir, extra) else null
             val messages = parseMessages(run.output, file).toMutableList()
-            val empty = run.output.any { EMPTY.containsMatchIn(it) }
+            // Nach einem Fehler (assert, Syntax) meldet OpenSCAD zusätzlich ein leeres Objekt - das ist dann kein „leer“
+            val empty = run.output.any { EMPTY.containsMatchIn(it) } && messages.none { it.level == RenderMessage.Level.ERROR }
             val failed = bytes == null && run.exitCode != 0 && !empty
             // Ohne erkennbare Meldung (z. B. Absturz): die letzten Zeilen zeigen
             if (failed && !cancelled && messages.none { it.level == RenderMessage.Level.ERROR } && run.output.isNotEmpty()) {
@@ -81,6 +85,7 @@ class OpenScadRender(private val exe: String) {
             return RenderResult(
                 bytes = bytes,
                 format = output.extension,
+                overlay = overlay,
                 messages = messages,
                 failed = failed,
                 empty = empty,
@@ -91,6 +96,27 @@ class OpenScadRender(private val exe: String) {
         } finally {
             FileUtil.delete(dir)
         }
+    }
+
+    /**
+     * #/%-Teile getrennt rechnen: erst den CSG-Baum, dann nur diese Teile. Eigene Läufe, weil OpenSCAD bei mehreren
+     * `-o` alles mehrfach auswertet (Meldungen und echo doppelt). Meldungen dieser Läufe zählen nicht.
+     */
+    private fun overlay(file: File, text: String?, dir: File, extra: List<String>): ByteArray? {
+        val code = text ?: runCatching { file.readText() }.getOrNull() ?: return null
+        if (cancelled || !CsgOverlay.mayHaveModifiers(code)) return null
+        val tree = run(file, text, File(dir, "tree.csg"), dir, extra).target
+        if (cancelled || !tree.isFile) return null
+        val source = CsgOverlay.build(tree.readText()) ?: return null
+        val target = File(dir, "overlay.3mf")
+        val process = CapturingProcessHandler(command(file, null, target, null))
+        handler = process
+        ApplicationManager.getApplication().executeOnPooledThread {
+            runCatching { process.processInput.use { it.write(source.toByteArray(StandardCharsets.UTF_8)) } }
+        }
+        process.runProcess()
+        handler = null
+        return target.takeIf { !cancelled && it.isFile && it.length() > 0 }?.readBytes()
     }
 
     private class Run(val target: File, val output: List<String>, val exitCode: Int)
