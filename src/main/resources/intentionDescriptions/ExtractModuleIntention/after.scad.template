@@ -1,0 +1,8 @@
+module shelf(w) {
+    <spot>part(w);</spot>
+}
+
+module part(w) {
+    cube([w, 20, 2]);
+    translate([0, 18, 0]) cube([w, 2, 10]);
+}

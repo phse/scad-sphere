@@ -1,0 +1,60 @@
+<templateSet group="OpenSCAD">
+  <template name="mod" value="module $NAME$($PARAMS$) {&#10;  $END$&#10;}" description="module declaration" toReformat="false" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;part&quot;" alwaysStopAt="true"/>
+    <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="fun" value="function $NAME$($PARAMS$) = $END$;" description="function declaration" toReformat="false" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;f&quot;" alwaysStopAt="true"/>
+    <variable name="PARAMS" expression="" defaultValue="&quot;x&quot;" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="for" value="for ($I$ = [$FROM$ : $TO$]) {&#10;  $END$&#10;}" description="for loop over a range" toReformat="false" toShortenFQNames="false">
+    <variable name="I" expression="" defaultValue="&quot;i&quot;" alwaysStopAt="true"/>
+    <variable name="FROM" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <variable name="TO" expression="" defaultValue="&quot;3&quot;" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="diff" value="difference() {&#10;  $BODY$&#10;  #$CUT$&#10;}" description="difference() with the cut part highlighted (#)" toReformat="false" toShortenFQNames="false">
+    <variable name="BODY" expression="" defaultValue="&quot;cube(10);&quot;" alwaysStopAt="true"/>
+    <variable name="CUT" expression="" defaultValue="&quot;cylinder(h = 30, r = 2, center = true);&quot;" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="uni" value="union() {&#10;  $END$&#10;}" description="union()" toReformat="false" toShortenFQNames="false">
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="inter" value="intersection() {&#10;  $END$&#10;}" description="intersection()" toReformat="false" toShortenFQNames="false">
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="hull" value="hull() {&#10;  $END$&#10;}" description="hull()" toReformat="false" toShortenFQNames="false">
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="tr" value="translate([$X$, $Y$, $Z$]) $END$" description="translate([x, y, z])" toReformat="false" toShortenFQNames="false">
+    <variable name="X" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <variable name="Y" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <variable name="Z" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="rot" value="rotate([$X$, $Y$, $Z$]) $END$" description="rotate([x, y, z])" toReformat="false" toShortenFQNames="false">
+    <variable name="X" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <variable name="Y" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <variable name="Z" expression="" defaultValue="&quot;90&quot;" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="col" value="color(&quot;$COLOR$&quot;) $END$" description="color()" toReformat="false" toShortenFQNames="false">
+    <variable name="COLOR" expression="" defaultValue="&quot;steelblue&quot;" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="cust" value="/* [$GROUP$] */&#10;// $DESCRIPTION$&#10;$NAME$ = $VALUE$; // [$RANGE$]&#10;$END$" description="Customizer group with a slider parameter" toReformat="false" toShortenFQNames="false">
+    <variable name="GROUP" expression="" defaultValue="&quot;Size&quot;" alwaysStopAt="true"/>
+    <variable name="DESCRIPTION" expression="" defaultValue="&quot;Width in mm&quot;" alwaysStopAt="true"/>
+    <variable name="NAME" expression="" defaultValue="&quot;width&quot;" alwaysStopAt="true"/>
+    <variable name="VALUE" expression="" defaultValue="&quot;40&quot;" alwaysStopAt="true"/>
+    <variable name="RANGE" expression="" defaultValue="&quot;10:5:100&quot;" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+  <template name="hid" value="/* [Hidden] */&#10;$$fn = $FN$;&#10;$END$" description="Hidden Customizer group with $fn" toReformat="false" toShortenFQNames="false">
+    <variable name="FN" expression="" defaultValue="&quot;64&quot;" alwaysStopAt="true"/>
+    <context><option name="OPENSCAD" value="true"/></context>
+  </template>
+</templateSet>

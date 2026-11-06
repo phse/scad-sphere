@@ -29,6 +29,14 @@ loop or `let` it lives in).
 - `include <…>`/`use <…>` paths are links (⌘-click), complete like file paths and follow file renames.
   They are looked up next to the file, in the folders from *Settings | Tools | SCAD Sphere*, in `OPENSCADPATH`,
   in the user library folder (`~/Documents/OpenSCAD/libraries` on macOS) and in the libraries of the installation.
+- **Go to Symbol** (⌘⌥O / Ctrl+Alt+Shift+N) finds modules and functions in all `.scad` files of the project (own file-based
+  index of the top-level declarations).
+- **Colors**: a swatch in the gutter next to `color()` with a literal (`"red"`, `"#ff0000"`, `[1, 0, 0]`, with alpha);
+  a click opens the color picker and writes the color back in the same notation (names become hex).
+- **Parameter name hints** before literal arguments of calls with at least two arguments: `cube([1, 2, 3], center: true)`.
+  Toggle in *Settings | Editor | Inlay Hints | Parameter names*.
+- **Live templates** (*Settings | Editor | Live Templates | OpenSCAD*): `mod`, `fun`, `for`, `diff` (with the cut part
+  marked `#`), `uni`, `inter`, `hull`, `tr`, `rot`, `col`, `cust` (Customizer group with slider), `hid` (`[Hidden]` with `$fn`).
 - **Completion** of modules, functions, variables, the built-ins and, inside a call, the parameter names of the
   called module or function (`name = `). **Parameter info** (⌘P / Ctrl+P).
 - **Documentation** (F1 / Ctrl+Q, also on hover): built-in modules and functions with signature, description
@@ -38,6 +46,12 @@ loop or `let` it lives in).
   and move with the text until the next run, also in included files that are open. Unknown modules and functions are
   marked as weak warnings while you type (not while an `include`/`use` file is missing), missing `include`/`use`
   files as warnings.
+- **Inspections** (*Settings | Editor | Inspections | OpenSCAD*): unused parameters and local variables, a variable
+  assigned twice in the same scope (OpenSCAD uses the last value everywhere), `use` without any used module or
+  function, calls that leave out a parameter without default value.
+- **Quick fixes and intentions** (⌥⏎ / Alt+Enter): create an unknown module or function, remove an unused variable or
+  `use`, highlight with `#` or remove it, inline a variable, extract the selected statements into a module (local names
+  become parameters).
 - Structure view, folding (blocks, comments, long vectors), comment/uncomment, brace matching, TODO comments.
 - Indentation on Enter and **Reformat Code** (indentation only; spacing within lines stays as written).
   Indent size in *Settings | Editor | Code Style | OpenSCAD*.
@@ -81,6 +95,9 @@ loop or `let` it lives in).
   the fitting ones once the preview has rendered). A dialog asks for the file and, where the installed OpenSCAD
   supports them, for options: binary or ASCII STL, colors and unit of a 3MF, paper size and orientation of a PDF. The
   options are detected from `openscad --help` and `--help-export` and the last choice is remembered.
+- **Open in Slicer** (editor toolbar, project tree, model viewer): exports a 3MF with colors and the Customizer values
+  to a temporary folder and opens it in Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura (the first one found,
+  or the one set in the settings). `.stl`, `.3mf`, `.obj` and `.amf` files are opened directly.
 - *Export Again* (first entry, also bindable to a shortcut) exports to the last target without asking.
 
 **Viewer** (`.stl` binary and ASCII, `.3mf`, `.obj`, `.off`, `.amf`; also used for the preview)
@@ -102,7 +119,7 @@ loop or `let` it lives in).
 
 **Settings** (*Settings | Tools | SCAD Sphere*): path to OpenSCAD (found automatically in the usual places of
 macOS, Windows and Linux), additional library folders, when to render, pause before rendering, preview shown on
-opening, print bed (size, presets for common printers, origin in the center or the front left corner).
+opening, slicer for *Open in Slicer*, print bed (size, presets for common printers, origin in the center or the front left corner).
 
 The UI is available in English and German.
 
@@ -156,6 +173,7 @@ The Marketplace description lives in `src/main/resources/META-INF/plugin.xml`, t
 3. The first version is uploaded by hand on the Marketplace; after that `./gradlew publishPlugin` with a token
    (`PUBLISH_TOKEN` or `jetbrainsMarketplaceToken` in `~/.gradle/gradle.properties`). JetBrains reviews every version.
 4. Tag the commit (`git tag v<version>`) and push.
+5. Screenshots, tags and the custom page (`marketplace/custom-pages/configuration.md`, without its own H1) are set by hand on the plugin page (*Edit Plugin*); `publishPlugin` doesn't upload them.
 
 ## Regenerating the screenshots
 
@@ -183,6 +201,10 @@ project with its own `screenshots.txt`.
 | `psi/ScadImports.kt` | `include`/`use`: path lookup, library folders, imported declarations (cached until the next change) |
 | `lang/ScadBuiltins.kt` | Built-in modules, functions and special variables with signatures and descriptions |
 | `lang/ScadCompletion.kt`, `ScadDocumentation.kt`, `ScadParameterInfo.kt` | Completion, quick documentation, parameter info |
+| `lang/ScadColorProvider.kt`, `ScadInlayHints.kt`, `ScadLiveTemplates.kt` | Color swatch for `color()`, parameter name hints, live template context (`resources/liveTemplates/OpenSCAD.xml`) |
+| `lang/ScadInspections.kt`, `ScadIntentions.kt` | Inspections with their quick fixes; create declaration, toggle `#`, inline variable, extract module |
+| `render/Slicer.kt` | Finding installed slicers and opening a file in them |
+| `psi/ScadSymbolIndex.kt` | File-based index of top-level modules and functions, Go to Symbol |
 | `lang/ScadFormatting.kt` | Indentation-only formatter and code style settings |
 | `render/RenderMessages.kt`, `lang/ScadRenderAnnotator.kt` | Messages of the last run per preview, as range markers, shown as annotations in the code |
 | `render/CsgOverlay.kt` | Parts with `#`/`%` from OpenSCAD's CSG tree, with the transforms above them, for the second run |

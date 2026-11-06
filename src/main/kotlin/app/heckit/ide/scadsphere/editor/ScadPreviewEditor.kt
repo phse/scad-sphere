@@ -272,7 +272,7 @@ class ScadSplitEditor(editor: TextEditor, val preview: ScadPreviewEditor) : Text
     override fun createLeftToolbarActionGroup(): ActionGroup {
         val actions = ActionManager.getInstance()
         // Neu rechnen und Customizer stehen in der Leiste des Viewers rechts oben
-        return DefaultActionGroup(actions.getAction("ScadSphere.Export"), actions.getAction("ScadSphere.OpenInOpenScad"))
+        return DefaultActionGroup(actions.getAction("ScadSphere.Export"), actions.getAction("ScadSphere.OpenInSlicer"), actions.getAction("ScadSphere.OpenInOpenScad"))
     }
 
 }

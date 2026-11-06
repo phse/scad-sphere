@@ -1,0 +1,2 @@
+cube([20, <spot>2</spot>, 10]);
+translate([0, 10, 0]) cube([20, 2 * 2, 10]);

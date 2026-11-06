@@ -13,6 +13,11 @@ object ScadSphereSettings {
         get() = PropertiesComponent.getInstance().getValue(PATH_KEY) ?: ""
         set(value) = PropertiesComponent.getInstance().setValue(PATH_KEY, value.trim(), "")
 
+    /** Slicer für *Open in Slicer*; leer = erster gefundener. */
+    var slicerPath: String
+        get() = PropertiesComponent.getInstance().getValue(SLICER_KEY) ?: ""
+        set(value) = PropertiesComponent.getInstance().setValue(SLICER_KEY, value.trim(), "")
+
     /** Zusätzliche Bibliotheksordner für include/use, einer je Zeile. */
     var libraryPaths: String
         get() = PropertiesComponent.getInstance().getValue(LIBRARIES_KEY) ?: ""
@@ -68,6 +73,7 @@ object ScadSphereSettings {
     private const val BED_DEPTH_KEY = "app.heckit.ide.scadsphere.bed.depth"
     private const val BED_HEIGHT_KEY = "app.heckit.ide.scadsphere.bed.height"
     private const val BED_CENTERED_KEY = "app.heckit.ide.scadsphere.bed.centered"
+    private const val SLICER_KEY = "app.heckit.ide.scadsphere.slicerPath"
     private const val PATH_KEY = "app.heckit.ide.scadsphere.openScadPath"
     private const val LIBRARIES_KEY = "app.heckit.ide.scadsphere.libraryPaths"
     private const val RENDER_MODE_KEY = "app.heckit.ide.scadsphere.renderMode"

@@ -1,6 +1,7 @@
 package app.heckit.ide.scadsphere.export
 
 import app.heckit.ide.scadsphere.ScadFileStates
+import app.heckit.ide.scadsphere.ScadSphereConfigurable
 import app.heckit.ide.scadsphere.ScadSphereBundle
 import app.heckit.ide.scadsphere.customizer.ScadCustomizer
 import app.heckit.ide.scadsphere.editor.NOTIFICATIONS
@@ -13,6 +14,9 @@ import app.heckit.ide.scadsphere.render.OpenScad
 import app.heckit.ide.scadsphere.render.OpenScadFeatures
 import app.heckit.ide.scadsphere.render.OpenScadRender
 import app.heckit.ide.scadsphere.render.RenderMessage
+import app.heckit.ide.scadsphere.render.Slicer
+import com.intellij.openapi.application.PathManager
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
@@ -279,4 +283,61 @@ private fun done(project: Project, text: String, files: List<File>) {
         notification.addAction(NotificationAction.createSimpleExpiring(ScadSphereBundle.message("export.open")) { OpenFileDescriptor(project, file).navigate(true) })
     }
     notification.notify(project)
+}
+
+/**
+ * Im Slicer öffnen: .scad wird als 3MF (mit Farben und den Werten des Customizers) in einen temporären Ordner exportiert,
+ * Modelldateien gehen direkt an den Slicer.
+ */
+class OpenInSlicerAction : DumbAwareAction(ScadSphereBundle.messagePointer("action.openInSlicer"), ScadSphereBundle.messagePointer("action.openInSlicer.description"), AllIcons.Ide.External_link_arrow) {
+    override fun getActionUpdateThread() = ActionUpdateThread.BGT
+
+    override fun update(e: AnActionEvent) {
+        val file = e.getData(CommonDataKeys.VIRTUAL_FILE)
+        e.presentation.isEnabledAndVisible = e.project != null && file != null && (e.scadFile() != null || file.extension?.lowercase() in SLICER_FORMATS)
+        Slicer.configured()?.let { e.presentation.text = ScadSphereBundle.message("action.openInSlicer.named", it.name) }
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val file = e.getData(CommonDataKeys.VIRTUAL_FILE) ?: return
+        val slicer = Slicer.configured() ?: return slicerNotFound(project)
+        if (e.scadFile() == null) return open(project, slicer, File(file.path))
+        val exe = OpenScad.executable() ?: return notFound(project)
+        val features = features(project, exe) ?: return
+        FileDocumentManager.getInstance().getDocument(file)?.let { FileDocumentManager.getInstance().saveDocument(it) }
+        val defines = ScadCustomizer.defines(project, file)
+        val target = File(File(PathManager.getTempPath(), "scad-sphere"), "${file.nameWithoutExtension}.3mf").also { it.parentFile.mkdirs() }
+        object : Task.Backgroundable(project, ScadSphereBundle.message("export.progress", target.name), true) {
+            private var result: OpenScadRender.ExportResult? = null
+
+            override fun run(indicator: ProgressIndicator) {
+                result = OpenScadRender(exe).export(File(file.path), target, ExportFormat.THREE_MF.rememberedOptions(features), defines, indicator)
+            }
+
+            override fun onSuccess() {
+                val result = result ?: return
+                if (!result.ok) return failed(project, target, result.messages)
+                open(project, slicer, target)
+            }
+        }.queue()
+    }
+
+    private fun open(project: Project, slicer: Slicer.Found, file: File) {
+        runCatching { Slicer.open(slicer, file) }
+            .onFailure { notify(project, ScadSphereBundle.message("openInSlicer.failed", slicer.name, it.message ?: ""), NotificationType.ERROR) }
+    }
+
+    private fun slicerNotFound(project: Project) {
+        NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATIONS)
+            .createNotification(ScadSphereBundle.message("openInSlicer.notFound"), NotificationType.WARNING)
+            .addAction(NotificationAction.createSimpleExpiring(ScadSphereBundle.message("preview.notFound.settings")) {
+                ShowSettingsUtil.getInstance().showSettingsDialog(project, ScadSphereConfigurable::class.java)
+            })
+            .notify(project)
+    }
+
+    private companion object {
+        val SLICER_FORMATS = setOf("stl", "3mf", "obj", "amf")
+    }
 }

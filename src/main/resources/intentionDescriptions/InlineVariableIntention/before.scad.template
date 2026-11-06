@@ -1,0 +1,3 @@
+wall = 2;
+cube([20, <spot>wall</spot>, 10]);
+translate([0, 10, 0]) cube([20, wall * 2, 10]);

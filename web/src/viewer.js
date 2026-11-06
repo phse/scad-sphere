@@ -735,10 +735,9 @@ function toolButton(entry) {
   button.dataset.tip = label(entry.name)
   button.innerHTML = svg(iconOf(entry))
   if (entry.items) {
+    // Nur Darüberfahren öffnet (trackHover), ein Klick tut nichts
     button.classList.add('group')
-    button.addEventListener('click', () => (openMenu?.button === button ? closeMenu() : showMenu(button, entry)))
-    button.addEventListener('pointerenter', () => hoverMenu(button, entry))
-    button.addEventListener('pointerleave', scheduleClose)
+    button.menuEntry = entry
   } else {
     button.addEventListener('click', () => { closeMenu(); entry.action() })
   }
@@ -763,30 +762,53 @@ function updateToolbar() {
 }
 
 // --- Menüs der Gruppen (Darüberfahren öffnet, Wegfahren schließt nach kurzer Pause) ---
+// Ausgewertet wird bei jeder Mausbewegung, was unter dem Zeiger liegt - nicht pointerenter/-leave der Knöpfe: Im
+// eingebetteten Browser der IDE kommen diese bei benachbarten Knöpfen teils vertauscht an, dann blieb das alte Menü
+// offen und beim Zurückfahren öffnete sich das des Nachbarn.
 
 let openMenu = null   // { button, entry, element }
 let closeTimer = null
 let hoverTimer = null
+let hoverButton = null // Knopf, dessen Menü gleich aufgeht
 
-function hoverMenu(button, entry) {
-  clearTimeout(closeTimer)
+function cancelHover() {
   clearTimeout(hoverTimer)
-  if (openMenu?.button === button) return
-  hoverTimer = setTimeout(() => showMenu(button, entry), openMenu ? 0 : 120)
+  hoverTimer = null
+  hoverButton = null
 }
 
-function scheduleClose() {
-  clearTimeout(hoverTimer)
+function cancelClose() {
   clearTimeout(closeTimer)
-  closeTimer = setTimeout(closeMenu, 250)
+  closeTimer = null
 }
+
+function trackHover(target) {
+  if (openMenu?.element.contains(target)) {
+    cancelHover()
+    cancelClose()
+    return
+  }
+  const button = target?.closest?.('.toolbar button.group')
+  if (button && !button.disabled) {
+    cancelClose()
+    if (openMenu?.button === button) { cancelHover(); return }
+    if (hoverButton === button) return
+    cancelHover()
+    hoverButton = button
+    hoverTimer = setTimeout(() => { hoverButton = null; showMenu(button, button.menuEntry) }, openMenu ? 0 : 120)
+    return
+  }
+  cancelHover()
+  if (openMenu && closeTimer === null) closeTimer = setTimeout(closeMenu, 250)
+}
+
+document.addEventListener('pointermove', (event) => trackHover(event.target), { passive: true })
+document.documentElement.addEventListener('pointerleave', () => trackHover(null))
 
 function showMenu(button, entry) {
   closeMenu()
   const element = document.createElement('div')
   element.className = 'menu'
-  element.addEventListener('pointerenter', () => clearTimeout(closeTimer))
-  element.addEventListener('pointerleave', scheduleClose)
   document.body.appendChild(element)
   openMenu = { button, entry, element }
   button.classList.add('open')
@@ -841,8 +863,8 @@ function menuRow(item) {
 }
 
 function closeMenu() {
-  clearTimeout(closeTimer)
-  clearTimeout(hoverTimer)
+  cancelClose()
+  cancelHover()
   if (!openMenu) return
   openMenu.element.remove()
   openMenu.button.classList.remove('open')
@@ -921,9 +943,16 @@ function bedShown() {
   return !!bed?.enabled && settings.bed
 }
 
-/** Fläche des Betts: um den Ursprung oder ab dem Ursprung (Ecke vorne links). */
+/**
+ * Fläche des Betts. Mitte: Der Slicer legt das Modell selbst aufs Bett und mittig hin - das Bett liegt deshalb unter
+ * dem tiefsten Punkt, mittig unter dem Modell. Ecke vorne links: Position bleibt, das Bett liegt ab dem Ursprung auf z = 0.
+ */
 function bedArea() {
-  const min = bed.center ? new Vector3(-bed.width / 2, -bed.depth / 2, 0) : new Vector3(0, 0, 0)
+  let min = new Vector3(0, 0, 0)
+  if (bed.center) {
+    const base = hasModel && bounds ? new Vector3((bounds.min.x + bounds.max.x) / 2, (bounds.min.y + bounds.max.y) / 2, bounds.min.z) : new Vector3()
+    min = base.sub(new Vector3(bed.width / 2, bed.depth / 2, 0))
+  }
   return new Box3(min, min.clone().add(new Vector3(bed.width, bed.depth, bed.height)))
 }
 
@@ -959,7 +988,7 @@ function updateBed() {
     const problem = !!bedProblem()
     const color = problem ? (theme.warning || '#c27d04') : (theme.active || '#3574f0')
     bedObject = new Group()
-    const z = -0.002 * Math.max(bed.width, bed.depth)
+    const z = area.min.z - 0.002 * Math.max(bed.width, bed.depth)
     const plate = new Mesh(
       new PlaneGeometry(bed.width, bed.depth),
       new MeshBasicMaterial({ color, transparent: true, opacity: theme.dark ? 0.08 : 0.06, depthWrite: false, side: DoubleSide }),
@@ -973,10 +1002,10 @@ function updateBed() {
     }
     bedObject.add(plate, outline(z, 0.9))
     // Bauraum nur andeuten, wenn das Modell zu hoch ist
-    if (problem && hasModel && bounds.max.z > bed.height) {
-      bedObject.add(outline(bed.height, 0.6))
+    if (problem && hasModel && bounds.max.z > area.max.z) {
+      bedObject.add(outline(area.max.z, 0.6))
       const corners = []
-      for (const x of [area.min.x, area.max.x]) for (const y of [area.min.y, area.max.y]) corners.push(new Vector3(x, y, z), new Vector3(x, y, bed.height))
+      for (const x of [area.min.x, area.max.x]) for (const y of [area.min.y, area.max.y]) corners.push(new Vector3(x, y, z), new Vector3(x, y, area.max.z))
       bedObject.add(new LineSegments(new BufferGeometry().setFromPoints(corners), new LineBasicMaterial({ color, transparent: true, opacity: 0.35 })))
     }
     scene.add(bedObject)

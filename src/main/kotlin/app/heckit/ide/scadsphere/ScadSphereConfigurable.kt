@@ -2,6 +2,7 @@ package app.heckit.ide.scadsphere
 
 import app.heckit.ide.scadsphere.psi.ScadLibraries
 import app.heckit.ide.scadsphere.render.OpenScad
+import app.heckit.ide.scadsphere.render.Slicer
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
@@ -73,6 +74,19 @@ class ScadSphereConfigurable : BoundConfigurable(ScadSphereBundle.message("setti
                 spinner(200..10000, 100).bindIntValue(ScadSphereSettings::renderDelay)
                 label(ScadSphereBundle.message("settings.renderDelay.unit"))
             }.enabledIf(mode.component.selectedValueIs(ScadSphereSettings.RenderMode.TYPING))
+        }
+        group(ScadSphereBundle.message("settings.slicer")) {
+            val slicers = Slicer.detect()
+            row(ScadSphereBundle.message("settings.slicer.path")) {
+                val field = textFieldWithBrowseButton(FileChooserDescriptor(true, true, false, false, false, false), null)
+                    .bindText(ScadSphereSettings::slicerPath)
+                    .align(AlignX.FILL)
+                    .comment(
+                        if (slicers.isEmpty()) ScadSphereBundle.message("settings.slicer.none")
+                        else ScadSphereBundle.message("settings.slicer.found", slicers.joinToString(", ") { StringUtil.escapeXmlEntities(it.name) }),
+                    )
+                (field.component.textField as? JBTextField)?.emptyText?.text = slicers.firstOrNull()?.path ?: ScadSphereBundle.message("settings.path.notFound")
+            }
         }
         group(ScadSphereBundle.message("settings.bed")) {
             lateinit var enabled: Cell<JBCheckBox>

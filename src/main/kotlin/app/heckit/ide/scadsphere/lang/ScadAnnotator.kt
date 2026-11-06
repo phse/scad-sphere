@@ -2,6 +2,7 @@ package app.heckit.ide.scadsphere.lang
 
 import app.heckit.ide.scadsphere.ScadSphereBundle
 import app.heckit.ide.scadsphere.psi.ScadArgument
+import app.heckit.ide.scadsphere.psi.ScadCallExpression
 import app.heckit.ide.scadsphere.psi.ScadFile
 import app.heckit.ide.scadsphere.psi.ScadImportStatement
 import app.heckit.ide.scadsphere.psi.ScadImports
@@ -51,7 +52,8 @@ class ScadAnnotator : Annotator {
         }
         holder.color(name, key)
         if (!resolved && key == ScadColors.MODULE_CALL && ScadImports.allImportsFound(call.containingFile as ScadFile)) {
-            holder.unknown(name, ScadSphereBundle.message("annotation.unknownModule", name.text))
+            holder.unknown(name, ScadSphereBundle.message("annotation.unknownModule", name.text),
+                CreateDeclarationFix(name.text, true, CreateDeclarationFix.argumentNames(call.arguments)))
         }
     }
 
@@ -80,12 +82,14 @@ class ScadAnnotator : Annotator {
         if (reference.isCallee && targets.isEmpty() && ScadBuiltins.function(name) == null &&
             ScadImports.allImportsFound(reference.containingFile as ScadFile)
         ) {
-            holder.unknown(reference, ScadSphereBundle.message("annotation.unknownFunction", name))
+            val arguments = (reference.parent as? ScadCallExpression)?.argumentList?.children?.filterIsInstance<ScadArgument>().orEmpty()
+            holder.unknown(reference, ScadSphereBundle.message("annotation.unknownFunction", name),
+                CreateDeclarationFix(name, false, CreateDeclarationFix.argumentNames(arguments)))
         }
     }
 
-    private fun AnnotationHolder.unknown(element: PsiElement, message: String) {
-        newAnnotation(HighlightSeverity.WEAK_WARNING, message).range(element).create()
+    private fun AnnotationHolder.unknown(element: PsiElement, message: String, fix: CreateDeclarationFix) {
+        newAnnotation(HighlightSeverity.WEAK_WARNING, message).range(element).withFix(fix).create()
     }
 
     /** `$fn` & Co. */

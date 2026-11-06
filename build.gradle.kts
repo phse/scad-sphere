@@ -89,6 +89,21 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.1.0</h3>
+            <ul>
+              <li>Go to Symbol for modules and functions across the project.</li>
+              <li>Color swatch in the gutter next to <code>color()</code>, with a color picker that writes the color back.</li>
+              <li>Parameter name hints before literal arguments, e.g. <code>cube([1, 2, 3], center: true)</code>.</li>
+              <li>Live templates: <code>mod</code>, <code>fun</code>, <code>for</code>, <code>diff</code>, <code>cust</code> and more.</li>
+              <li>Inspections: unused parameters and variables, a variable assigned twice in the same scope, unused
+                  <code>use</code>, missing arguments.</li>
+              <li>Quick fixes and intentions: create an unknown module or function, inline a variable, extract the selection
+                  into a module, toggle <code>#</code>.</li>
+              <li>Open in Slicer (Bambu Studio, OrcaSlicer, PrusaSlicer, UltiMaker Cura) with colors and Customizer values.</li>
+              <li>Print bed with the origin in the center: drawn under the lowest point of the model and centered below it,
+                  where the slicer will place it.</li>
+              <li>Toolbar menus of the viewer open on hover only and no longer show the menu of the previous button.</li>
+            </ul>
             <h3>1.0.0</h3>
             <ul>
               <li>First stable release.</li>

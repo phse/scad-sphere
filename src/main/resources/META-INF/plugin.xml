@@ -15,9 +15,13 @@
   <li>Highlighting of declarations, calls, parameters, named arguments, special variables (<code>$fn</code>) and modifiers (<code># ! % *</code>).</li>
   <li>Go to declaration, find usages, rename and highlighting of usages - also across <code>include</code> and <code>use</code>,
       with the library folders OpenSCAD uses (<code>OPENSCADPATH</code>, the user library folder, own folders).</li>
-  <li>Completion of modules, functions, variables, parameter names and library paths; parameter info.</li>
+  <li>Completion of modules, functions, variables, parameter names and library paths; parameter info and parameter name hints.</li>
+  <li>Go to Symbol for modules and functions across the project.</li>
+  <li>Color swatches next to <code>color()</code> with a color picker; live templates for modules, functions, <code>difference()</code> and Customizer groups.</li>
   <li>Errors and warnings of the last OpenSCAD run at their line in the code; unknown modules and functions and missing
       <code>include</code>/<code>use</code> files are marked while you type.</li>
+  <li>Inspections: unused parameters and variables, variables assigned twice, unused <code>use</code>, missing arguments.
+      Quick fixes and intentions: create an unknown module or function, inline a variable, extract a module, toggle <code>#</code>.</li>
   <li>Documentation of the built-in modules and functions with a link to the manual; comments above your own modules.</li>
   <li>Structure view, folding, commenting, brace matching, indentation and Reformat Code.</li>
 </ul>
@@ -48,6 +52,7 @@
   <li>3MF, STL (binary or ASCII), OBJ, OFF, AMF, SVG, DXF and PDF, with the options your OpenSCAD version offers
       (colors and unit of a 3MF, paper size of a PDF) and the Customizer values.</li>
   <li>Export Again to the last file with one click, or open the file in OpenSCAD.</li>
+  <li>Open in Slicer: Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura get a 3MF with colors and the Customizer values.</li>
 </ul>
 
 <p>The language support only searches OpenSCAD files: finding usages in PHP, HTML or any other language is never slowed down by it.
@@ -98,6 +103,40 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <lang.elementManipulator forClass="app.heckit.ide.scadsphere.psi.ScadImportStatement"
                                  implementationClass="app.heckit.ide.scadsphere.psi.ScadImportManipulator"/>
         <indexPatternBuilder implementation="app.heckit.ide.scadsphere.lang.ScadIndexPatternBuilder"/>
+        <colorProvider implementation="app.heckit.ide.scadsphere.lang.ScadColorProvider"/>
+        <codeInsight.declarativeInlayProvider language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadInlayParameterHintsProvider"
+                                             isEnabledByDefault="true" group="PARAMETERS_GROUP" providerId="app.heckit.ide.scadsphere.parameters"
+                                             bundle="messages.ScadSphereBundle" nameKey="inlay.parameters.name" descriptionKey="inlay.parameters.description"/>
+        <liveTemplateContext contextId="OPENSCAD" implementation="app.heckit.ide.scadsphere.lang.ScadTemplateContextType"/>
+        <defaultLiveTemplates file="/liveTemplates/OpenSCAD.xml"/>
+        <localInspection language="heckit.OpenSCAD" groupName="OpenSCAD" enabledByDefault="true" level="WARNING"
+                         implementationClass="app.heckit.ide.scadsphere.lang.ScadUnusedInspection" key="inspection.unused.name" bundle="messages.ScadSphereBundle"/>
+        <localInspection language="heckit.OpenSCAD" groupName="OpenSCAD" enabledByDefault="true" level="WARNING"
+                         implementationClass="app.heckit.ide.scadsphere.lang.ScadDuplicateAssignmentInspection" key="inspection.duplicate.name" bundle="messages.ScadSphereBundle"/>
+        <localInspection language="heckit.OpenSCAD" groupName="OpenSCAD" enabledByDefault="true" level="WARNING"
+                         implementationClass="app.heckit.ide.scadsphere.lang.ScadUnusedUseInspection" key="inspection.unusedUse.name" bundle="messages.ScadSphereBundle"/>
+        <localInspection language="heckit.OpenSCAD" groupName="OpenSCAD" enabledByDefault="true" level="WARNING"
+                         implementationClass="app.heckit.ide.scadsphere.lang.ScadMissingArgumentInspection" key="inspection.missingArgument.name" bundle="messages.ScadSphereBundle"/>
+        <intentionAction>
+            <language>heckit.OpenSCAD</language>
+            <className>app.heckit.ide.scadsphere.lang.ToggleHighlightIntention</className>
+            <bundleName>messages.ScadSphereBundle</bundleName>
+            <categoryKey>intention.category</categoryKey>
+        </intentionAction>
+        <intentionAction>
+            <language>heckit.OpenSCAD</language>
+            <className>app.heckit.ide.scadsphere.lang.InlineVariableIntention</className>
+            <bundleName>messages.ScadSphereBundle</bundleName>
+            <categoryKey>intention.category</categoryKey>
+        </intentionAction>
+        <intentionAction>
+            <language>heckit.OpenSCAD</language>
+            <className>app.heckit.ide.scadsphere.lang.ExtractModuleIntention</className>
+            <bundleName>messages.ScadSphereBundle</bundleName>
+            <categoryKey>intention.category</categoryKey>
+        </intentionAction>
+        <fileBasedIndex implementation="app.heckit.ide.scadsphere.psi.ScadSymbolIndex"/>
+        <gotoSymbolContributor implementation="app.heckit.ide.scadsphere.psi.ScadSymbolContributor"/>
 
         <fileEditorProvider implementation="app.heckit.ide.scadsphere.editor.ScadSplitEditorProvider"/>
         <fileEditorProvider implementation="app.heckit.ide.scadsphere.editor.ModelFileEditorProvider"/>
@@ -117,6 +156,7 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <group id="ScadSphere.FileActions">
             <group id="ScadSphere.Export" class="app.heckit.ide.scadsphere.export.ExportGroup" popup="true"/>
             <action id="ScadSphere.OpenInOpenScad" class="app.heckit.ide.scadsphere.editor.OpenInOpenScadAction"/>
+            <action id="ScadSphere.OpenInSlicer" class="app.heckit.ide.scadsphere.export.OpenInSlicerAction"/>
             <group id="ScadSphere.Convert" class="app.heckit.ide.scadsphere.export.ConvertGroup" popup="true"/>
             <action id="ScadSphere.NewScadFromModel" class="app.heckit.ide.scadsphere.export.NewScadFromModelAction"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
@@ -126,6 +166,7 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <group id="ScadSphere.ModelToolbar">
             <reference ref="ScadSphere.Convert"/>
             <reference ref="ScadSphere.NewScadFromModel"/>
+            <reference ref="ScadSphere.OpenInSlicer"/>
         </group>
     </actions>
 </idea-plugin>
