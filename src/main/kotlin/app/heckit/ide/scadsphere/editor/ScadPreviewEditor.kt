@@ -13,6 +13,8 @@ import app.heckit.ide.scadsphere.customizer.ToggleCustomizerAction
 import app.heckit.ide.scadsphere.export.ExportFormat
 import app.heckit.ide.scadsphere.lang.ScadFileType
 import app.heckit.ide.scadsphere.psi.ScadFile
+import app.heckit.ide.scadsphere.customizer.formatNumber
+import app.heckit.ide.scadsphere.render.CsgOverlay
 import app.heckit.ide.scadsphere.render.OpenScad
 import app.heckit.ide.scadsphere.render.OpenScadRender
 import app.heckit.ide.scadsphere.render.RenderMessages
@@ -86,6 +88,14 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     @Volatile
     private var disposed = false
 
+    /** Animation über `$t`: nur, wenn der Code `$t` verwendet. Bilder je Schritt gemerkt, bis sich etwas ändert. */
+    private var animated = false
+    private var steps = DEFAULT_STEPS
+    private var frame = 0
+    private var playing = false
+    private val frames = HashMap<Int, RenderResult>()
+    private val playAlarm = Alarm(this)
+
     val isRendering: Boolean get() = current != null
 
     /** Die Datei hat Parameter für den Customizer. */
@@ -94,8 +104,10 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     init {
         viewer.onNavigate = ::navigate
         viewer.onAction = ::onAction
+        viewer.onImage = { saveViewImage(project, file, it) }
         document?.addDocumentListener(object : DocumentListener {
             override fun documentChanged(event: DocumentEvent) {
+                frames.clear()
                 if (ScadSphereSettings.renderMode == RenderMode.TYPING) schedule(ScadSphereSettings.renderDelay)
                 parseAlarm.cancelAllRequests()
                 parseAlarm.addRequest(::parseParameters, PARSE_DELAY)
@@ -109,6 +121,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         viewer.component.addHierarchyListener { event ->
             if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L && viewer.component.isShowing && dirty) schedule(0)
         }
+        viewer.onAnimation = ::onAnimation
         parseParameters()
     }
 
@@ -121,6 +134,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
             .withDocumentsCommitted(project)
             .expireWith(this)
             .finishOnUiThread(ModalityState.nonModal()) { parameters ->
+                updateAnimated()
                 customizer.update(parameters)
                 updateCustomizerVisibility()
             }
@@ -158,12 +172,30 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     /** Neu rechnen nach [delay] ms (spätere Aufrufe verschieben das). */
     fun schedule(delay: Int) {
         dirty = true
+        frames.clear()
         alarm.cancelAllRequests()
         alarm.addRequest({ if (viewer.component.isShowing) render() }, delay)
     }
 
     /** Sofort neu rechnen (Knopf in der Werkzeugleiste). */
     fun render() {
+        frames.clear()
+        renderFrame()
+    }
+
+    /** Aktuellen Stand rechnen; bei einer Animation den aktuellen Schritt (aus dem Speicher, wenn schon gerechnet). */
+    private fun renderFrame() {
+        if (animated) frames[frame]?.let { cached ->
+            dirty = false
+            generation++
+            current?.cancel()
+            current = null
+            viewer.setStatus(null)
+            updateTools()
+            show(cached, null)
+            continuePlaying(cached = true)
+            return
+        }
         val exe = OpenScad.executable()
         if (exe == null) {
             viewer.showEmpty(ScadSphereBundle.message("preview.notFound"), ScadSphereBundle.message("preview.notFound.settings"), "settings")
@@ -178,16 +210,23 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         val text = if (unsaved) document.text else null
         val stamp = document?.modificationStamp
         val source = File(file.path)
+        val step = frame.takeIf { animated }
+        val defines = ScadCustomizer.defines(project, file) + listOfNotNull(step?.let { "${'$'}t=${formatNumber(it.toDouble() / steps)}" })
         viewer.setStatus(ScadSphereBundle.message("preview.rendering"))
         updateTools()
         ApplicationManager.getApplication().executeOnPooledThread {
-            val result = runCatching { render.render(source, text, ScadCustomizer.defines(project, file)) }
+            val result = runCatching { render.render(source, text, defines) }
             ApplicationManager.getApplication().invokeLater({
                 if (run != generation) return@invokeLater
                 current = null
                 viewer.setStatus(null)
                 updateTools()
-                result.onSuccess { show(it, stamp) }.onFailure {
+                result.onSuccess {
+                    if (step != null && !it.cancelled && it.bytes != null) frames[step] = it
+                    show(it, stamp)
+                    if (step != null) continuePlaying(cached = false)
+                }.onFailure {
+                    stopPlaying()
                     viewer.showEmpty(ScadSphereBundle.message("preview.error", it.message ?: it.javaClass.simpleName), keepModel = hasModel)
                 }
             }, { disposed })
@@ -200,6 +239,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     fun invokeViewer(function: String, argument: Any?) = viewer.invoke(function, argument)
 
     fun cancel() {
+        stopPlaying()
         generation++
         current?.cancel()
         current = null
@@ -211,7 +251,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         if (result.cancelled) return
         dependencies = result.dependencies
         viewer.setMessages(result.messages)
-        RenderMessages.getInstance(project).update(file, result.messages, stamp)
+        RenderMessages.getInstance(project).update(this, file, result.messages, stamp)
         val bytes = result.bytes
         when {
             bytes != null -> {
@@ -242,6 +282,63 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         }
     }
 
+    /** Der Code verwendet `$t` (ohne Kommentare und Zeichenketten): Animationsleiste zeigen. */
+    private fun updateAnimated() {
+        val now = document?.let { CsgOverlay.usesTime(it.text) } ?: false
+        if (now == animated) return
+        animated = now
+        frames.clear()
+        if (!now) stopPlaying()
+        frame = 0
+        updateAnimation()
+        // Ohne Animation rechnet OpenSCAD mit $t = 0 - der erste Schritt ist also schon zu sehen
+    }
+
+    private fun updateAnimation() =
+        viewer.setAnimation(if (animated) mapOf("frame" to frame, "steps" to steps, "playing" to playing) else null)
+
+    private fun onAnimation(action: String, value: Int?) {
+        when (action) {
+            "play" -> { playing = true; updateAnimation(); renderFrame() }
+            "pause" -> stopPlaying()
+            "frame" -> {
+                stopPlaying()
+                frame = (value ?: 0).coerceIn(0, steps - 1)
+                updateAnimation()
+                renderFrame()
+            }
+            "steps" -> {
+                val new = (value ?: DEFAULT_STEPS).coerceIn(2, 360)
+                if (new == steps) return
+                // gleiche Stelle der Animation behalten
+                frame = (frame * new / steps).coerceIn(0, new - 1)
+                steps = new
+                frames.clear()
+                updateAnimation()
+                renderFrame()
+            }
+        }
+    }
+
+    /** Beim Abspielen den nächsten Schritt holen: gemerkte Bilder im festen Takt, neue so schnell OpenSCAD rechnet. */
+    private fun continuePlaying(cached: Boolean) {
+        if (!playing) return
+        playAlarm.cancelAllRequests()
+        playAlarm.addRequest({
+            if (!playing || !viewer.component.isShowing) return@addRequest stopPlaying()
+            frame = (frame + 1) % steps
+            updateAnimation()
+            renderFrame()
+        }, if (cached) FRAME_MS else 0)
+    }
+
+    private fun stopPlaying() {
+        playAlarm.cancelAllRequests()
+        if (!playing) return
+        playing = false
+        updateAnimation()
+    }
+
     override fun getComponent(): JComponent = splitter
     override fun getPreferredFocusedComponent(): JComponent? = null
     override fun getName(): String = ScadSphereBundle.message("editor.preview")
@@ -255,12 +352,14 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     override fun dispose() {
         disposed = true
         current?.cancel()
-        RenderMessages.getInstance(project).clear(file)
+        RenderMessages.getInstance(project).clear(this, file)
     }
 
     private companion object {
         const val PARSE_DELAY = 300
         const val CUSTOMIZER_DELAY = 300
+        const val DEFAULT_STEPS = 24
+        const val FRAME_MS = 100
     }
 }
 

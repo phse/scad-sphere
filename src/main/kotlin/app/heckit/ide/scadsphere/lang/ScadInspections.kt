@@ -124,25 +124,68 @@ class ScadUnusedUseInspection : LocalInspectionTool() {
 class ScadMissingArgumentInspection : LocalInspectionTool() {
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor = object : PsiElementVisitor() {
         override fun visitElement(element: PsiElement) {
-            val (reference, nameElement, arguments) = when (element) {
-                is ScadModuleCall -> Triple(element.reference as? ScadReference, element.nameElement, element.arguments)
-                is ScadCallExpression -> {
-                    val callee = element.callee as? ScadReferenceExpression ?: return
-                    Triple(callee.reference as? ScadReference, callee, element.argumentList?.children?.filterIsInstance<ScadArgument>().orEmpty())
-                }
-                else -> return
-            }
-            if (reference == null || nameElement == null) return
-            val declaration = reference.multiResolve(false).mapNotNull { it.element as? ScadCallableDeclaration }.distinct().singleOrNull() ?: return
-            val positional = arguments.count { it.argumentName == null }
-            val named = arguments.mapNotNull { it.argumentName?.text }.toSet()
-            val missing = declaration.parameters.withIndex()
-                .filter { (index, parameter) -> parameter.defaultValue == null && !isExempt(parameter.name) && index >= positional && parameter.name !in named }
-                .map { it.value.name!! }
-            if (missing.isEmpty()) return
+            val (_, missing) = missingArguments(element) ?: return
+            val nameElement = callNameElement(element) ?: return
             holder.registerProblem(nameElement, ScadSphereBundle.message("inspection.missingArgument", missing.joinToString(", ") { "'$it'" }, missing.size))
         }
     }
+}
+
+/** Name des Aufgerufenen bei einem Modul- oder Funktionsaufruf. */
+fun callNameElement(element: PsiElement): PsiElement? = when (element) {
+    is ScadModuleCall -> element.nameElement
+    is ScadCallExpression -> element.callee as? ScadReferenceExpression
+    else -> null
+}
+
+/**
+ * Aufgerufene Deklaration und die Parameter ohne Standardwert, für die [element] (Modul- oder Funktionsaufruf) kein
+ * Argument mitgibt; null, wenn es kein Aufruf ist oder nichts fehlt.
+ */
+fun missingArguments(element: PsiElement): Pair<ScadCallableDeclaration, List<String>>? {
+    val (reference, arguments) = when (element) {
+        is ScadModuleCall -> (element.reference as? ScadReference) to element.arguments
+        is ScadCallExpression -> {
+            val callee = element.callee as? ScadReferenceExpression ?: return null
+            (callee.reference as? ScadReference) to element.argumentList?.children?.filterIsInstance<ScadArgument>().orEmpty()
+        }
+        else -> return null
+    }
+    if (reference == null) return null
+    val declaration = reference.multiResolve(false).mapNotNull { it.element as? ScadCallableDeclaration }.distinct().singleOrNull() ?: return null
+    val positional = arguments.count { it.argumentName == null }
+    val named = arguments.mapNotNull { it.argumentName?.text }.toSet()
+    val missing = declaration.parameters.withIndex()
+        .filter { (index, parameter) -> parameter.defaultValue == null && !isExempt(parameter.name) && index >= positional && parameter.name !in named }
+        .map { it.value.name!! }
+    return if (missing.isEmpty()) null else declaration to missing
+}
+
+/**
+ * Parameter, die bei [element] (Modul- oder Funktionsaufruf) zwar ein Argument bekommen, aber sicher `undef`:
+ * das Literal `undef` oder eine Variable, die es nirgends gibt (z. B. Tippfehler `undefined`).
+ */
+fun undefinedArguments(element: PsiElement): Pair<ScadCallableDeclaration, List<String>>? {
+    val (reference, arguments) = when (element) {
+        is ScadModuleCall -> (element.reference as? ScadReference) to element.arguments
+        is ScadCallExpression -> {
+            val callee = element.callee as? ScadReferenceExpression ?: return null
+            (callee.reference as? ScadReference) to element.argumentList?.children?.filterIsInstance<ScadArgument>().orEmpty()
+        }
+        else -> return null
+    }
+    if (reference == null) return null
+    val declaration = reference.multiResolve(false).mapNotNull { it.element as? ScadCallableDeclaration }.distinct().singleOrNull() ?: return null
+    val names = declaration.parameters.map { it.name }
+    var position = 0
+    val undefined = arguments.mapNotNull { argument ->
+        val name = argument.argumentName?.text ?: names.getOrNull(position++)
+        val value = argument.value
+        val isUndef = value?.text == "undef" ||
+            (value is ScadReferenceExpression && !value.text.startsWith("$") && (value.reference as? ScadReference)?.multiResolve(false).isNullOrEmpty())
+        name?.takeIf { isUndef }
+    }
+    return if (undefined.isEmpty()) null else declaration to undefined
 }
 
 /** Element samt Zeilenrest (Leerraum bis einschließlich Zeilenumbruch) entfernen. */

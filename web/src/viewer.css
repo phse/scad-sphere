@@ -246,6 +246,45 @@ html, body {
 .section-panel input { width: 140px; }
 .section-panel .value { min-width: 92px; font-variant-numeric: tabular-nums; }
 
+.animation-panel {
+  position: absolute;
+  top: 46px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.animation-panel button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.animation-panel button:hover { background: var(--hover); color: var(--fg); }
+.animation-panel svg { width: 14px; height: 14px; display: block; margin: auto; pointer-events: none; }
+.animation-panel input[type=range] { width: 140px; }
+.animation-panel .value { min-width: 72px; font-variant-numeric: tabular-nums; }
+.animation-panel .steps {
+  width: 44px;
+  padding: 1px 3px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+}
+
 .toolbar button.group { position: relative; }
 .toolbar button.group::after {
   content: "";

@@ -2,6 +2,7 @@ package app.heckit.ide.scadsphere.editor
 
 import app.heckit.ide.scadsphere.ScadSphereBundle
 import app.heckit.ide.scadsphere.ScadSphereConfigurable
+import app.heckit.ide.scadsphere.customizer.ScadCustomizer
 import app.heckit.ide.scadsphere.lang.ScadFileType
 import app.heckit.ide.scadsphere.render.OpenScad
 import com.intellij.icons.AllIcons
@@ -19,7 +20,10 @@ import com.intellij.openapi.fileTypes.FileTypeRegistry
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.fileChooser.FileChooserFactory
+import com.intellij.openapi.fileChooser.FileSaverDescriptor
 
 internal fun AnActionEvent.splitEditor(): ScadSplitEditor? =
     getData(PlatformCoreDataKeys.FILE_EDITOR) as? ScadSplitEditor
@@ -63,12 +67,27 @@ class OpenInOpenScadAction : DumbAwareAction(ScadSphereBundle.messagePointer("ac
         val file = e.scadFile() ?: return
         val exe = OpenScad.executable() ?: return notFound(project)
         FileDocumentManager.getInstance().getDocument(file)?.let { FileDocumentManager.getInstance().saveDocument(it) }
-        runCatching { OpenScad.openInGui(exe, file.path) }
+        // Geänderte Customizer-Werte mitgeben, sonst zeigt die Oberfläche ein anderes Modell als die Vorschau
+        val defines = ScadCustomizer.defines(project, file)
+        runCatching { OpenScad.openInGui(exe, file.path, defines) }
             .onFailure { notify(project, ScadSphereBundle.message("openInOpenScad.failed", it.message ?: ""), NotificationType.ERROR) }
     }
 }
 
 const val NOTIFICATIONS = "SCAD Sphere"
+
+/** Aktuelle Ansicht des Viewers als PNG speichern; vorgeschlagen wird `<datei>.png` daneben. */
+internal fun saveViewImage(project: Project?, file: VirtualFile, png: ByteArray) {
+    val descriptor = FileSaverDescriptor(ScadSphereBundle.message("image.title"), ScadSphereBundle.message("image.description"), "png")
+    val target = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+        .save(file.parent, file.nameWithoutExtension + ".png") ?: return
+    runCatching {
+        target.file.writeBytes(png)
+        LocalFileSystem.getInstance().refreshAndFindFileByIoFile(target.file)
+    }.onFailure { error ->
+        project?.let { notify(it, ScadSphereBundle.message("image.failed", error.message ?: ""), NotificationType.ERROR) }
+    }
+}
 
 internal fun notify(project: Project, text: String, type: NotificationType) {
     NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATIONS).createNotification(text, type).notify(project)

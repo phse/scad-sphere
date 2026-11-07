@@ -8,6 +8,9 @@ object ScadSphereSettings {
     /** Wann die Vorschau einer .scad-Datei neu gerechnet wird. */
     enum class RenderMode { TYPING, SAVE, MANUAL }
 
+    /** Geometrie-Backend für 3D (`--backend`); DEFAULT = was die installierte Version standardmäßig nimmt. */
+    enum class Backend(val argument: String?) { DEFAULT(null), MANIFOLD("Manifold"), CGAL("CGAL") }
+
     /** Pfad zu OpenSCAD; leer = automatisch suchen. */
     var openScadPath: String
         get() = PropertiesComponent.getInstance().getValue(PATH_KEY) ?: ""
@@ -28,6 +31,10 @@ object ScadSphereSettings {
     var renderMode: RenderMode
         get() = PropertiesComponent.getInstance().getValue(RENDER_MODE_KEY)?.let { v -> RenderMode.entries.find { it.name == v } } ?: RenderMode.TYPING
         set(value) = PropertiesComponent.getInstance().setValue(RENDER_MODE_KEY, value.name, RenderMode.TYPING.name)
+
+    var backend: Backend
+        get() = PropertiesComponent.getInstance().getValue(BACKEND_KEY)?.let { v -> Backend.entries.find { it.name == v } } ?: Backend.DEFAULT
+        set(value) = PropertiesComponent.getInstance().setValue(BACKEND_KEY, value.name, Backend.DEFAULT.name)
 
     /** Wartezeit nach dem letzten Tastendruck, bevor die Vorschau neu gerechnet wird (ms). */
     var renderDelay: Int
@@ -77,6 +84,7 @@ object ScadSphereSettings {
     private const val PATH_KEY = "app.heckit.ide.scadsphere.openScadPath"
     private const val LIBRARIES_KEY = "app.heckit.ide.scadsphere.libraryPaths"
     private const val RENDER_MODE_KEY = "app.heckit.ide.scadsphere.renderMode"
+    private const val BACKEND_KEY = "app.heckit.ide.scadsphere.backend"
     private const val RENDER_DELAY_KEY = "app.heckit.ide.scadsphere.renderDelay"
     private const val SHOW_PREVIEW_KEY = "app.heckit.ide.scadsphere.showPreview"
     private const val SHOW_CUSTOMIZER_KEY = "app.heckit.ide.scadsphere.showCustomizer"

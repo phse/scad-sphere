@@ -30,7 +30,8 @@ loop or `let` it lives in).
   They are looked up next to the file, in the folders from *Settings | Tools | SCAD Sphere*, in `OPENSCADPATH`,
   in the user library folder (`~/Documents/OpenSCAD/libraries` on macOS) and in the libraries of the installation.
 - **Go to Symbol** (⌘⌥O / Ctrl+Alt+Shift+N) finds modules and functions in all `.scad` files of the project (own file-based
-  index of the top-level declarations).
+  index of the top-level declarations). Library folders outside the project appear under *External Libraries* and are
+  found with *Include non-project items*.
 - **Colors**: a swatch in the gutter next to `color()` with a literal (`"red"`, `"#ff0000"`, `[1, 0, 0]`, with alpha);
   a click opens the color picker and writes the color back in the same notation (names become hex).
 - **Parameter name hints** before literal arguments of calls with at least two arguments: `cube([1, 2, 3], center: true)`.
@@ -41,7 +42,8 @@ loop or `let` it lives in).
   called module or function (`name = `). **Parameter info** (⌘P / Ctrl+P).
 - **Documentation** (F1 / Ctrl+Q, also on hover): built-in modules and functions with signature, description
   and a link to the OpenSCAD manual; own modules, functions and variables with their signature and the comment
-  above them (or after them on the same line, as for Customizer variables).
+  above them (or after them on the same line, as for Customizer variables). BOSL2 doc blocks (`// Module: cuboid()` with
+  Synopsis, Usage, Description, Arguments) and NopSCADlib `//!` comments are shown too; completion shows their summary.
 - **Problems in the code**: errors and warnings of the last OpenSCAD run (from the preview) are shown at their line
   and move with the text until the next run, also in included files that are open. Unknown modules and functions are
   marked as weak warnings while you type (not while an `include`/`use` file is missing), missing `include`/`use`
@@ -98,19 +100,23 @@ loop or `let` it lives in).
 - **Open in Slicer** (editor toolbar, project tree, model viewer): exports a 3MF with colors and the Customizer values
   to a temporary folder and opens it in Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura (the first one found,
   or the one set in the settings). `.stl`, `.3mf`, `.obj` and `.amf` files are opened directly.
+- **Open in OpenSCAD** passes the values changed in the Customizer as `-D` (on macOS in a new OpenSCAD window, a
+  running one ignores new arguments).
 - *Export Again* (first entry, also bindable to a shortcut) exports to the last target without asking.
 
 **Viewer** (`.stl` binary and ASCII, `.3mf`, `.obj`, `.off`, `.amf`; also used for the preview)
 
 - Rotate with the left mouse button, pan with the right one, zoom with the wheel (towards the cursor).
 - Toolbar: fit, *Views* (isometric, top, bottom, front, right, left, back), *Display* (colors or one color, edges,
-  orthographic projection, grid, print bed), measure, section; in the preview also render again and the Customizer.
+  orthographic projection, grid, print bed), measure, section, save the view as PNG; in the preview also render again and the Customizer.
   Groups open on hover; in a narrow preview less important buttons move into a » menu.
 - **Print bed**: outline of the build plate on the grid; when the model is larger (or, with the origin in the front
   left corner, partly outside the bed or below z = 0), the outline turns orange and a warning appears next to the size.
 - **Measure**: click two points on the model (corners snap within 12 px); shows the distance and Δx/Δy/Δz.
   Esc clears the measurement.
-- **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled.
+- **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled and hatched.
+- **Animation**: files that use `$t` get a bar with play, a slider and the number of steps. Each step is one OpenSCAD run
+  with `-D $t=…`; computed steps are kept until the code, the Customizer or an included file changes.
 - Size of the model in mm (bounding box) and the number of triangles at the bottom left.
 - Files reload when they change on disk (e.g. after an export).
 - **Convert To ▸** (toolbar above the model, project tree, also for several files): OpenSCAD imports the model and

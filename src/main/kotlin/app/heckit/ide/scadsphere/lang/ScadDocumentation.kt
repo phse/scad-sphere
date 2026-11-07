@@ -79,12 +79,18 @@ class ScadDocumentationProvider : AbstractDocumentationProvider() {
         }
         append(StringUtil.escapeXmlEntities(keyword + element.signature()))
         append(DocumentationMarkup.DEFINITION_END)
-        comment(element)?.let {
+        val doc = ScadDocComments.of(element)
+        val esc = { text: String -> StringUtil.escapeXmlEntities(text) }
+        val paragraphs = listOfNotNull(doc?.text, doc?.synopsis, doc?.description)
+        if (paragraphs.isNotEmpty() || doc?.usage?.isNotEmpty() == true) {
             append(DocumentationMarkup.CONTENT_START)
-            append(StringUtil.escapeXmlEntities(it).replace("\n", "<br>"))
+            append(paragraphs.joinToString("<p>") { esc(it).replace("\n\n", "<p>").replace("\n", "<br>") })
+            if (doc?.usage?.isNotEmpty() == true) append("<pre>").append(doc.usage.joinToString("\n") { esc(it) }).append("</pre>")
             append(DocumentationMarkup.CONTENT_END)
         }
         append(DocumentationMarkup.SECTIONS_START)
+        doc?.arguments?.forEach { (name, text) -> section(esc(name), esc(text)) }
+        doc?.seeAlso?.let { section(ScadSphereBundle.message("doc.seeAlso.label"), esc(it)) }
         element.containingFile?.name?.let { section(ScadSphereBundle.message("doc.file.label"), StringUtil.escapeXmlEntities(it)) }
         append(DocumentationMarkup.SECTIONS_END)
     }
@@ -92,33 +98,5 @@ class ScadDocumentationProvider : AbstractDocumentationProvider() {
     private fun StringBuilder.section(label: String, value: String) {
         append(DocumentationMarkup.SECTION_HEADER_START).append(label).append(DocumentationMarkup.SECTION_SEPARATOR)
         append(value).append(DocumentationMarkup.SECTION_END)
-    }
-
-    /** Kommentarzeilen direkt über der Deklaration, sonst ein Kommentar dahinter in derselben Zeile. */
-    private fun comment(element: ScadNamedElement): String? {
-        val lines = mutableListOf<String>()
-        var sibling = element.prevSibling
-        while (sibling != null) {
-            if (sibling is PsiWhiteSpace) {
-                if (sibling.text.count { it == '\n' } > 1) break
-            } else if (sibling is PsiComment) {
-                lines.add(0, clean(sibling.text))
-            } else {
-                break
-            }
-            sibling = sibling.prevSibling
-        }
-        if (lines.isEmpty()) {
-            var next = element.nextSibling
-            while (next is PsiWhiteSpace && !next.text.contains('\n')) next = next.nextSibling
-            if (next is PsiComment && next.node.elementType == ScadTypes.LINE_COMMENT) lines += clean(next.text)
-        }
-        return lines.joinToString("\n").trim().ifEmpty { null }
-    }
-
-    private fun clean(comment: String): String = when {
-        comment.startsWith("//") -> comment.removePrefix("//").trim()
-        else -> comment.removePrefix("/**").removePrefix("/*").removeSuffix("*/").lines()
-            .joinToString("\n") { it.trim().removePrefix("*").trim() }.trim()
     }
 }

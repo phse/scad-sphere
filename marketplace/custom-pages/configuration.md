@@ -5,6 +5,7 @@
 | Option | Values | Default |
 | --- | --- | --- |
 | Application | path to the OpenSCAD executable | found automatically (usual locations on macOS, Windows, Linux) |
+| Geometry backend | OpenSCAD default / Manifold (fast) / CGAL (classic); passed as `--backend` if the installed version knows it | OpenSCAD default |
 | Library folders | one folder per line | – |
 | Show the preview next to the editor when opening .scad files | on / off | on |
 | Render | While typing / When saved / Only on request | While typing |

@@ -129,15 +129,27 @@ object OpenScad {
         return paths.joinToString(File.pathSeparator).ifEmpty { null }
     }
 
-    /** OpenSCAD-Oberfläche mit [file] öffnen (läuft unabhängig von der IDE weiter). */
-    fun openInGui(exe: String, file: String) {
+    /** `--backend=…` laut Einstellung, sofern die installierte Version die Option kennt. Nicht auf dem EDT aufrufen. */
+    fun backendArguments(exe: String): List<String> {
+        val backend = ScadSphereSettings.backend.argument ?: return emptyList()
+        return if (features(exe).backend) listOf("--backend=$backend") else emptyList()
+    }
+
+    /**
+     * OpenSCAD-Oberfläche mit [file] öffnen (läuft unabhängig von der IDE weiter). [defines]: geänderte Werte aus dem
+     * Customizer als `-D`; die Oberfläche hängt sie wie die Kommandozeile an den Code an. Unter macOS braucht das
+     * eine neue Instanz (`open -n`), eine laufende ignoriert neue Argumente.
+     */
+    fun openInGui(exe: String, file: String, defines: List<String> = emptyList()) {
         val app = Regex("""^(.*\.app)/Contents/MacOS/""").find(exe)?.groupValues?.get(1)
+        val defineArgs = defines.flatMap { listOf("-D", it) }
         val command = if (SystemInfo.isMac && app != null) {
-            GeneralCommandLine("open", "-a", app, file)
+            if (defineArgs.isEmpty()) GeneralCommandLine("open", "-a", app, file)
+            else GeneralCommandLine(listOf("open", "-n", "-a", app, "--args") + defineArgs + file)
         } else {
             // Unter Windows die GUI-Variante starten, nicht die Konsole
             val gui = if (SystemInfo.isWindows) File(File(exe).parentFile, "openscad.exe").takeIf { it.isFile }?.path ?: exe else exe
-            GeneralCommandLine(gui, file)
+            GeneralCommandLine(listOf(gui) + defineArgs + file)
         }
         command.withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE).createProcess()
     }
@@ -147,7 +159,7 @@ object OpenScad {
  * Fähigkeiten von OpenSCAD beim Export: binäres STL (`--export-format binstl`) und die Einstellungen für `-O`
  * je Abschnitt (`export-3mf`, `export-pdf`, …) mit ihren möglichen Werten.
  */
-class OpenScadFeatures(val binaryStl: Boolean, private val settings: Map<String, Map<String, Setting>>) {
+class OpenScadFeatures(val binaryStl: Boolean, val backend: Boolean, private val settings: Map<String, Map<String, Setting>>) {
     /** Eine Einstellung; [values] bei Auswahl (enum) bzw. true/false, [default] wie OpenSCAD sie markiert. */
     class Setting(val type: String, val values: List<String>, val default: String?)
 
@@ -185,7 +197,7 @@ class OpenScadFeatures(val binaryStl: Boolean, private val settings: Map<String,
                 val default = items.firstOrNull { it.startsWith("<") }?.trim('<', '>')
                 current[key] = Setting(type, items.map { it.trim('<', '>') }, default)
             }
-            return OpenScadFeatures("binstl" in help, settings)
+            return OpenScadFeatures("binstl" in help, "--backend" in help, settings)
         }
     }
 }

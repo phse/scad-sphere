@@ -22,6 +22,7 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.project.ProjectLocator
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -54,6 +55,7 @@ class ModelFileEditor(private val file: VirtualFile) : UserDataHolderBase(), Fil
         toolbar.component.border = JBUI.Borders.customLineBottom(JBColor.border())
         root.add(toolbar.component, BorderLayout.NORTH)
         root.add(viewer.component, BorderLayout.CENTER)
+        viewer.onImage = { saveViewImage(ProjectLocator.getInstance().guessProjectForFile(file), file, it) }
         load(keepCamera = false)
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {

@@ -16,13 +16,13 @@
   <li>Go to declaration, find usages, rename and highlighting of usages - also across <code>include</code> and <code>use</code>,
       with the library folders OpenSCAD uses (<code>OPENSCADPATH</code>, the user library folder, own folders).</li>
   <li>Completion of modules, functions, variables, parameter names and library paths; parameter info and parameter name hints.</li>
-  <li>Go to Symbol for modules and functions across the project.</li>
+  <li>Go to Symbol for modules and functions across the project and the library folders.</li>
   <li>Color swatches next to <code>color()</code> with a color picker; live templates for modules, functions, <code>difference()</code> and Customizer groups.</li>
   <li>Errors and warnings of the last OpenSCAD run at their line in the code; unknown modules and functions and missing
       <code>include</code>/<code>use</code> files are marked while you type.</li>
   <li>Inspections: unused parameters and variables, variables assigned twice, unused <code>use</code>, missing arguments.
       Quick fixes and intentions: create an unknown module or function, inline a variable, extract a module, toggle <code>#</code>.</li>
-  <li>Documentation of the built-in modules and functions with a link to the manual; comments above your own modules.</li>
+  <li>Documentation of the built-in modules and functions with a link to the manual; comments above your own modules, BOSL2 doc blocks and NopSCADlib <code>//!</code> comments.</li>
   <li>Structure view, folding, commenting, brace matching, indentation and Reformat Code.</li>
 </ul>
 
@@ -34,7 +34,8 @@
   <li>Views (isometric, top, front, right), colors or one color, edges, orthographic projection, grid and the size of the model in mm.</li>
   <li>Parts marked with <code>#</code> and <code>%</code> appear transparent, like in OpenSCAD's own preview.</li>
   <li>Print bed outline (size and origin configurable, presets for common printers) and a warning when the model does not fit.</li>
-  <li>Measure distances between two points (snaps to corners) and a section view along X, Y or Z.</li>
+  <li>Measure distances between two points (snaps to corners) and a hatched section view along X, Y or Z.</li>
+  <li>Animation of <code>$t</code> with play and slider; save the current view as PNG.</li>
   <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change.
       Convert them to another format (also several at once), or start a new .scad file that imports them.</li>
 </ul>
@@ -51,7 +52,7 @@
 <ul>
   <li>3MF, STL (binary or ASCII), OBJ, OFF, AMF, SVG, DXF and PDF, with the options your OpenSCAD version offers
       (colors and unit of a 3MF, paper size of a PDF) and the Customizer values.</li>
-  <li>Export Again to the last file with one click, or open the file in OpenSCAD.</li>
+  <li>Export Again to the last file with one click, or open the file in OpenSCAD with the Customizer values.</li>
   <li>Open in Slicer: Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura get a 3MF with colors and the Customizer values.</li>
 </ul>
 
@@ -137,6 +138,7 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         </intentionAction>
         <fileBasedIndex implementation="app.heckit.ide.scadsphere.psi.ScadSymbolIndex"/>
         <gotoSymbolContributor implementation="app.heckit.ide.scadsphere.psi.ScadSymbolContributor"/>
+        <additionalLibraryRootsProvider implementation="app.heckit.ide.scadsphere.psi.ScadLibraryRootsProvider"/>
 
         <fileEditorProvider implementation="app.heckit.ide.scadsphere.editor.ScadSplitEditorProvider"/>
         <fileEditorProvider implementation="app.heckit.ide.scadsphere.editor.ModelFileEditorProvider"/>

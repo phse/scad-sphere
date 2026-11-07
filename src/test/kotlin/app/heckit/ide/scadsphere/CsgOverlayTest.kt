@@ -42,6 +42,20 @@ class CsgOverlayTest : TestCase() {
         assertTrue(overlay.substringAfter("color([0.5").contains("sphere("))
     }
 
+    fun testHighlightInsideExtrusionKeepsExtrusion() {
+        val overlay = CsgOverlay.build(
+            "linear_extrude(height = 5) {\n\tsquare(size = [10, 10]);\n#\tmultmatrix([[1, 0, 0, 2], [0, 1, 0, 2], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n\t\tcircle(r = 2);\n\t}\n}",
+        )!!
+        assertTrue(overlay.contains("linear_extrude(height = 5)"))
+        assertTrue(overlay.contains("circle(r = 2)"))
+        assertFalse(overlay.contains("square"))
+    }
+
+    fun testUsesTime() {
+        assertTrue(CsgOverlay.usesTime("rotate([0, 0, 360 * ${'$'}t]) cube(1);"))
+        assertFalse(CsgOverlay.usesTime("// ${'$'}t\necho(\"${'$'}t\"); ${'$'}tx = 1;"))
+    }
+
     fun testNothingMarked() {
         assertNull(CsgOverlay.build("cube(size = [1, 1, 1], center = false);\ncolor(\"#ff0000\") { cube(size = 1); }"))
     }

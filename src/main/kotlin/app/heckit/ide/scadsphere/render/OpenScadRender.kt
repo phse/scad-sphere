@@ -143,6 +143,7 @@ class OpenScadRender(private val exe: String) {
             .withCharset(StandardCharsets.UTF_8)
             .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
         if (deps != null) command.addParameters("-d", deps.path)
+        command.addParameters(OpenScad.backendArguments(exe))
         command.addParameters(extra)
         OpenScad.libraryPathEnvironment()?.let { command.withEnvironment("OPENSCADPATH", it) }
         command.addParameter(input?.path ?: "-")

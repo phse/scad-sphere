@@ -55,6 +55,11 @@ class ScadSphereConfigurable : BoundConfigurable(ScadSphereBundle.message("setti
                     }, ModalityState.any())
                 }
             }
+            row(ScadSphereBundle.message("settings.backend")) {
+                comboBox(ScadSphereSettings.Backend.entries, textListCellRenderer { ScadSphereBundle.message("settings.backend." + (it ?: ScadSphereSettings.Backend.DEFAULT).name.lowercase()) })
+                    .bindItem(ScadSphereSettings::backend.toNullableProperty())
+                    .comment(ScadSphereBundle.message("settings.backend.comment"))
+            }
             row(ScadSphereBundle.message("settings.libraries")) {
                 textArea().bindText(ScadSphereSettings::libraryPaths).rows(3).align(AlignX.FILL)
                     .comment(ScadSphereBundle.message("settings.libraries.comment", StringUtil.escapeXmlEntities(ScadLibraries.userLibraryDir())))
@@ -130,6 +135,9 @@ class ScadSphereConfigurable : BoundConfigurable(ScadSphereBundle.message("setti
 
     override fun apply() {
         super.apply()
+        // Neue Bibliotheksordner sofort für include/use; External Libraries/Go to Symbol nach der nächsten
+        // Änderung der Projektstruktur bzw. einem Neustart (der Weg zum sofortigen Neuindizieren ist experimentelle API)
+        ScadLibraries.invalidate()
         ApplicationManager.getApplication().messageBus.syncPublisher(ViewerSettingsListener.TOPIC).changed()
     }
 

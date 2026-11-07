@@ -42,7 +42,7 @@ class ScadAnnotatorTest : BasePlatformTestCase() {
             RenderMessage(RenderMessage.Level.WARNING, "Ignoring unknown variable 'r'", path, 2),
             RenderMessage(RenderMessage.Level.ECHO, "ignored", path, 1),
         )
-        RenderMessages.getInstance(project).update(myFixture.file.virtualFile, messages, stamp)
+        RenderMessages.getInstance(project).update(this, myFixture.file.virtualFile, messages, stamp)
         myFixture.editor.caretModel.moveToOffset(0)
         myFixture.type("\n")
         val warnings = myFixture.doHighlighting().filter { it.description?.startsWith("OpenSCAD:") == true }
@@ -54,7 +54,32 @@ class ScadAnnotatorTest : BasePlatformTestCase() {
         myFixture.configureByText(ScadFileType, "cube(1);\n")
         val path = myFixture.file.virtualFile.path
         val message = RenderMessage(RenderMessage.Level.ERROR, "Parser error", path, 1)
-        RenderMessages.getInstance(project).update(myFixture.file.virtualFile, listOf(message), myFixture.editor.document.modificationStamp - 1)
+        RenderMessages.getInstance(project).update(this, myFixture.file.virtualFile, listOf(message), myFixture.editor.document.modificationStamp - 1)
         assertTrue(myFixture.doHighlighting().none { it.description?.startsWith("OpenSCAD:") == true })
+    }
+
+    fun testRenderWarningNamesCallWithoutArgument() {
+        myFixture.configureByText(ScadFileType, "module wand(w, h) {\n    cube([w, 2, h]);\n}\nwand(10);\nwand(10, 5);\nwand(undefined, h = 3);\n")
+        val file = myFixture.file.virtualFile
+        val message = RenderMessage(RenderMessage.Level.WARNING, "Unable to convert cube(size=[10, 2, undef])", file.path, 2)
+        val second = RenderMessage(RenderMessage.Level.WARNING, "Unable to convert cube(size=[12, 2, undef])", file.path, 2)
+        RenderMessages.getInstance(project).update(this, file, listOf(message, second), myFixture.editor.document.modificationStamp)
+        val warning = myFixture.doHighlighting().single { it.description?.startsWith("OpenSCAD:") == true }
+        assertTrue(warning.description, warning.description.endsWith("(wand() without 'h': line 4) (wand() with undefined 'w': line 6)"))
+    }
+
+    fun testSecondPreviewKeepsMessages() {
+        myFixture.configureByText(ScadFileType, "cube(1);\n")
+        val file = myFixture.file.virtualFile
+        val message = RenderMessage(RenderMessage.Level.WARNING, "Something", file.path, 1)
+        val messages = RenderMessages.getInstance(project)
+        val first = Any()
+        val second = Any()
+        messages.update(first, file, listOf(message), myFixture.editor.document.modificationStamp)
+        messages.update(second, file, listOf(message), myFixture.editor.document.modificationStamp)
+        messages.clear(first, file)
+        assertEquals(1, messages.forFile(file.path).size)
+        messages.clear(second, file)
+        assertTrue(messages.forFile(file.path).isEmpty())
     }
 }

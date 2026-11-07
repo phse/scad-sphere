@@ -41,7 +41,7 @@ try {
   empty.textContent = labels.noWebGl || 'WebGL is not available.'
   empty.hidden = false
   const noop = () => {}
-  window.scadSphere = { load: noop, setTools: noop, setTheme: noop, setStatus: noop, showEmpty: noop, setMessages: noop, expandMessages: noop, fit: noop, snapshot: noop, state: noop, setBed: noop }
+  window.scadSphere = { load: noop, setTools: noop, setTheme: noop, setStatus: noop, showEmpty: noop, setMessages: noop, expandMessages: noop, fit: noop, snapshot: noop, state: noop, setBed: noop, setAnimation: noop }
   host.send({ type: 'error', message: String(error) })
   host.send({ type: 'ready' })
   throw error
@@ -628,6 +628,7 @@ const icons = {
   section: '<path d="M8 1.8 13.5 5v6.2L8 14.3 2.5 11.2V5z" opacity=".45"/><path d="M1 8.5h14" /><path d="M2.5 8.5 8 11.6l5.5-3.1L8 5.4z" fill="currentColor" fill-opacity=".35"/>',
   display: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
   more: '<path d="M4 4.5 7.5 8 4 11.5M8.5 4.5 12 8l-3.5 3.5"/>',
+  image: '<path d="M2 5.5a1 1 0 0 1 1-1h2l1-1.5h4l1 1.5h2a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><circle cx="8" cy="8.5" r="2.4"/>',
   colors: '<circle cx="5.9" cy="6" r="3.4"/><circle cx="10.1" cy="6" r="3.4"/><circle cx="8" cy="9.8" r="3.4"/>',
 }
 
@@ -659,8 +660,11 @@ function toolbarEntries() {
     { name: 'views', icon: 'iso', items: viewItems, keep: 8 },
     { name: 'display', items: displayItems, keep: 4 },
     'sep',
-    { name: 'measure', action: toggleMeasure, isOn: () => measure.on, enabled: () => hasModel, keep: 3 },
+    // Beim Abspielen kommt alle paar Millisekunden ein neues Modell - Messpunkte hielten nicht
+    { name: 'measure', action: toggleMeasure, isOn: () => measure.on, enabled: () => hasModel && !timeAnimation?.playing,
+      disabledTip: () => timeAnimation?.playing ? 'tool.measure.playing' : null, keep: 3 },
     { name: 'section', action: toggleSection, isOn: () => section.on, enabled: () => hasModel, keep: 2 },
+    { name: 'image', action: () => host.send({ type: 'image', data: snapshot() }), enabled: () => hasModel, keep: 0 },
     ...(tools ? [
       'sep',
       { name: 'render', action: () => host.send({ type: 'action', action: 'render' }), keep: 7 },
@@ -754,11 +758,19 @@ function updateToolbar() {
     button.disabled = !enabled
     button.classList.toggle('on', enabled && !!entry.isOn?.())
     button.dataset.tip = entry.name === 'render' && tools?.rendering ? label('stop')
-      : enabled ? label(entry.name) : labels[`tool.${entry.name}.none`] || label(entry.name)
+      : enabled ? label(entry.name) : labels[entry.disabledTip?.() || `tool.${entry.name}.none`] || label(entry.name)
     const icon = iconOf(entry)
     if (button.firstElementChild?.dataset.icon !== icon) button.innerHTML = svg(icon)
   }
-  if (openMenu) fillMenu(openMenu)
+  // Nur neu aufbauen, wenn sich etwas geändert hat: Beim Abspielen einer Animation kommt jedes Bild hier vorbei, ein
+  // ständig ersetztes Menü verschluckt sonst Klicks (Element zwischen Drücken und Loslassen ausgetauscht)
+  if (openMenu && menuSignature(openMenu) !== openMenu.signature) fillMenu(openMenu)
+}
+
+function menuSignature(menu) {
+  const items = typeof menu.entry.items === 'function' ? menu.entry.items() : menu.entry.items
+  const flat = items.flatMap((item) => item.items ? [item, ...item.items] : [item])
+  return flat.map((item) => `${item.name}:${isEnabled(item)}:${!!item.isOn?.()}:${iconOf(item)}`).join('|')
 }
 
 // --- Menüs der Gruppen (Darüberfahren öffnet, Wegfahren schließt nach kurzer Pause) ---
@@ -821,6 +833,7 @@ function showMenu(button, entry) {
 }
 
 function fillMenu(menu) {
+  menu.signature = menuSignature(menu)
   const items = typeof menu.entry.items === 'function' ? menu.entry.items() : menu.entry.items
   menu.element.textContent = ''
   // Überschrift statt Tooltip: Name der Gruppe (im »-Menü haben die Gruppen eigene Überschriften)
@@ -853,7 +866,7 @@ function menuRow(item) {
   row.disabled = !enabled
   const check = item.isOn ? `<span class="check">${enabled && item.isOn() ? '✓' : ''}</span>` : '<span class="check"></span>'
   row.innerHTML = `${check}${svg(iconOf(item))}<span class="text"></span>`
-  row.querySelector('.text').textContent = enabled ? label(item.name) : labels[`tool.${item.name}.none`] || label(item.name)
+  row.querySelector('.text').textContent = enabled ? label(item.name) : labels[item.disabledTip?.() || `tool.${item.name}.none`] || label(item.name)
   row.addEventListener('click', () => {
     item.action()
     // Menü bleibt offen: mehrere Ansichten oder Umschalter nacheinander; zu geht es beim Wegfahren, Esc oder Klick daneben
@@ -1179,6 +1192,58 @@ sectionSlider.addEventListener('input', () => {
   applySection()
 })
 
+// --- Animation ($t): Leiste oben links, das Plugin rechnet je Schritt (setAnimation) ---
+
+const animationPanel = document.createElement('div')
+animationPanel.className = 'animation-panel'
+animationPanel.hidden = true
+animationPanel.innerHTML = `
+  <button type="button" class="play"></button>
+  <input type="range" min="0" step="1">
+  <span class="value"></span>
+  <input type="number" class="steps" min="2" max="360">`
+document.body.appendChild(animationPanel)
+const animationSlider = animationPanel.querySelector('input[type=range]')
+const animationSteps = animationPanel.querySelector('.steps')
+animationSteps.dataset.tip = labels['animation.steps'] || 'Steps'
+let timeAnimation = null
+const playIcon = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8v10.4L13 8z"/></svg>'
+const pauseIcon = '<svg viewBox="0 0 16 16" fill="currentColor"><rect x="4" y="3" width="2.6" height="10" rx=".6"/><rect x="9.4" y="3" width="2.6" height="10" rx=".6"/></svg>'
+animationPanel.querySelector('.play').addEventListener('click', () => {
+  if (timeAnimation) host.send({ type: 'animation', action: timeAnimation.playing ? 'pause' : 'play' })
+})
+animationSlider.addEventListener('input', () => {
+  updateAnimationValue(Number(animationSlider.value))
+  host.send({ type: 'animation', action: 'frame', value: Number(animationSlider.value) })
+})
+animationSteps.addEventListener('change', () => host.send({ type: 'animation', action: 'steps', value: Number(animationSteps.value) }))
+
+function updateAnimationValue(frame) {
+  const t = frame / timeAnimation.steps
+  animationPanel.querySelector('.value').textContent = `$t = ${t.toLocaleString(init.locale || undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 })}`
+}
+
+/** null blendet die Leiste aus, sonst { frame, steps, playing }. */
+function setAnimation(state) {
+  timeAnimation = state
+  animationPanel.hidden = !state
+  if (state?.playing && measure.on) toggleMeasure()
+  updateToolbar()
+  if (!state) return
+  animationSlider.max = String(state.steps - 1)
+  animationSlider.value = String(state.frame)
+  if (document.activeElement !== animationSteps) animationSteps.value = String(state.steps)
+  const play = animationPanel.querySelector('.play')
+  // Nur bei Wechsel ersetzen: Beim Abspielen kommt jedes Bild hier vorbei, ein ausgetauschtes Symbol unter dem Zeiger
+  // verschluckt sonst den Klick (Element zwischen Drücken und Loslassen ersetzt)
+  if (play.dataset.state !== String(state.playing)) {
+    play.dataset.state = String(state.playing)
+    play.innerHTML = state.playing ? pauseIcon : playIcon
+  }
+  play.dataset.tip = state.playing ? (labels['animation.pause'] || 'Pause') : (labels['animation.play'] || 'Play')
+  updateAnimationValue(state.frame)
+}
+
 function sectionLimits() {
   if (!hasModel) return [0, 1]
   return [bounds.min[section.axis], bounds.max[section.axis]]
@@ -1232,6 +1297,18 @@ function buildCaps() {
   if (!model) return
   caps = new Group()
   const material = new MeshBasicMaterial({ color: theme.dark ? '#5c606a' : '#8c909c', side: BackSide, clippingPlanes: [clipPlane] })
+  // Schnittfläche schraffiert (45°, in Bildschirm-Pixeln - gleich dicht bei jedem Zoom), wie in einer Schnittzeichnung
+  const spacing = (8 * renderer.getPixelRatio()).toFixed(1)
+  const line = (1.2 * renderer.getPixelRatio()).toFixed(1)
+  const stripe = theme.dark ? 'vec3(0.25, 0.26, 0.29)' : 'vec3(0.38, 0.39, 0.43)'
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <dithering_fragment>',
+      `#include <dithering_fragment>
+      if (mod(gl_FragCoord.x + gl_FragCoord.y, ${spacing}) < ${line}) gl_FragColor.rgb = ${stripe};`,
+    )
+  }
+  material.customProgramCacheKey = () => `cap-hatch-${spacing}-${theme.dark}`
   model.updateMatrixWorld(true)
   model.traverse((child) => {
     if (!child.isMesh) return
@@ -1438,7 +1515,7 @@ function setMeasure(points) {
   requestRender()
 }
 
-window.scadSphere = { load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure }
+window.scadSphere = { load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation }
 
 if (init.theme) setTheme(init.theme)
 else scene.background = new Color('#f7f8fa')

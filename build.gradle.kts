@@ -89,6 +89,21 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.2.0</h3>
+            <ul>
+              <li>Animation: files using <code>${'$'}t</code> get a play bar in the viewer; each step is one OpenSCAD run,
+                  computed steps are kept until the code changes.</li>
+              <li>Save the current 3D view as PNG.</li>
+              <li>Open in OpenSCAD passes the values changed in the Customizer.</li>
+              <li>Setting for the geometry backend (Manifold or CGAL) if the installed OpenSCAD supports it.</li>
+              <li>Library documentation: BOSL2 doc blocks and NopSCADlib <code>//!</code> comments in the quick
+                  documentation and as summary in code completion.</li>
+              <li>Library folders outside the project appear under External Libraries, so Go to Symbol finds their modules.</li>
+              <li>OpenSCAD warnings inside a module name the calls that pass no or an undefined value for the parameter used
+                  in that line; repeated messages of the same line are merged.</li>
+              <li>Section view with hatched cut faces; <code>#</code> parts inside <code>linear_extrude</code> are shown
+                  extruded instead of flat; two previews of the same file keep their messages when one is closed.</li>
+            </ul>
             <h3>1.1.0</h3>
             <ul>
               <li>Go to Symbol for modules and functions across the project.</li>

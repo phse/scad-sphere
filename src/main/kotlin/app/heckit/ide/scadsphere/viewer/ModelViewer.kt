@@ -29,6 +29,7 @@ import org.cef.callback.CefMenuModel
 import org.cef.handler.CefContextMenuHandlerAdapter
 import java.awt.Color
 import java.io.File
+import java.util.Base64
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComponent
@@ -58,6 +59,15 @@ class ModelViewer(parent: Disposable) : Disposable {
 
     /** Klick auf eine Meldung mit Datei und Zeile. */
     var onNavigate: ((file: String?, line: Int) -> Unit)? = null
+
+    /** Knopf „Bild speichern“: die aktuelle Ansicht als PNG. */
+    var onImage: ((ByteArray) -> Unit)? = null
+
+    /** Animationsleiste: `play`, `pause`, `frame` (Schritt) oder `steps` (Anzahl). */
+    var onAnimation: ((String, Int?) -> Unit)? = null
+
+    /** Animationsleiste zeigen (`frame`, `steps`, `playing`) oder mit null ausblenden. */
+    fun setAnimation(state: Map<String, Any>?) = call("setAnimation", state)
 
     /** Klick auf einen Link im Hinweis (z. B. „settings“). */
     var onAction: ((String) -> Unit)? = null
@@ -158,6 +168,11 @@ class ModelViewer(parent: Disposable) : Disposable {
                 onNavigate?.invoke(file, line)
             }
             "action" -> message.get("action")?.asString?.let { onAction?.invoke(it) }
+            "animation" -> message.get("action")?.asString?.let { action ->
+                onAnimation?.invoke(action, message.get("value")?.takeIf { !it.isJsonNull }?.asInt)
+            }
+            "image" -> message.get("data")?.asString?.substringAfter("base64,", "")?.takeIf { it.isNotEmpty() }
+                ?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }?.let { onImage?.invoke(it) }
             "error" -> thisLogger().warn("Viewer: ${message.get("message")}")
         }
     }
@@ -181,9 +196,9 @@ class ModelViewer(parent: Disposable) : Disposable {
         "tool.fit", "tool.iso", "tool.top", "tool.front", "tool.right", "tool.colors", "tool.colors.none", "tool.edges", "tool.ortho", "tool.grid",
         "tool.render", "tool.stop", "tool.customizer", "tool.customizer.none",
         "messages.error", "messages.warning", "messages.echo", "triangles", "parseError", "noWebGl",
-        "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.section", "tool.section.none",
+        "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.section", "tool.section.none",
         "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
-        "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
+        "tool.image", "tool.image.none", "animation.play", "animation.pause", "animation.steps", "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
     ).associateWith { ScadSphereBundle.message("viewer.$it") }
 
     private fun applyTheme() {

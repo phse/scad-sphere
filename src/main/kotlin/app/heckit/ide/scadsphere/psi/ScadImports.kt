@@ -149,6 +149,11 @@ object ScadLibraries {
             .also { cached = now to it }
     }
 
+    /** Nach geänderten Einstellungen sofort neu suchen. */
+    fun invalidate() {
+        cached = null
+    }
+
     /** Kurz gemerkt: wird bei jedem include/use gefragt. */
     @Volatile
     private var cached: Pair<Long, List<VirtualFile>>? = null

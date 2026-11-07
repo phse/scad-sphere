@@ -20,14 +20,17 @@ import java.util.concurrent.ConcurrentHashMap
 class RenderMessages(private val project: Project) {
     class Marked(val message: RenderMessage, val marker: RangeMarker)
 
-    /** Quelle (gerechnete Datei) → Meldungen, nach betroffener Datei (kanonischer Pfad) */
-    private val bySource = ConcurrentHashMap<String, Map<String, List<Marked>>>()
+    /**
+     * Vorschau → Meldungen ihres letzten Laufs, nach betroffener Datei (kanonischer Pfad). Je Vorschau statt je
+     * Quelle, damit das Schließen einer von zwei Vorschauen derselben Datei die Meldungen der anderen nicht löscht.
+     */
+    private val byOwner = ConcurrentHashMap<Any, Map<String, List<Marked>>>()
 
     /**
-     * Meldungen eines Laufs von [source] übernehmen. [stamp]: Änderungsstand des Dokuments beim Start des Laufs -
+     * Meldungen eines Laufs von [source] in der Vorschau [owner] übernehmen. [stamp]: Änderungsstand des Dokuments beim Start des Laufs -
      * hat sich der Text seitdem geändert, passen die Zeilen nicht mehr, die Meldungen dieser Datei fallen dann weg.
      */
-    fun update(source: VirtualFile, messages: List<RenderMessage>, stamp: Long?) {
+    fun update(owner: Any, source: VirtualFile, messages: List<RenderMessage>, stamp: Long?) {
         val sourcePath = canonical(source.path)
         val marked = messages.asSequence()
             .filter { it.level == RenderMessage.Level.ERROR || it.level == RenderMessage.Level.WARNING }
@@ -40,21 +43,22 @@ class RenderMessages(private val project: Project) {
                 path to list.mapNotNull { mark(document, it) }
             }
             .toMap()
-        val old = bySource.put(sourcePath, marked)
+        val old = byOwner.put(owner, marked)
         refresh(source, old.orEmpty().keys + marked.keys)
         old?.values?.flatten()?.forEach { it.marker.dispose() }
     }
 
-    fun clear(source: VirtualFile) {
-        val old = bySource.remove(canonical(source.path)) ?: return
+    fun clear(owner: Any, source: VirtualFile) {
+        val old = byOwner.remove(owner) ?: return
         refresh(source, old.keys)
         old.values.flatten().forEach { it.marker.dispose() }
     }
 
-    /** Gültige Meldungen zu [path] aus allen Vorschauen */
+    /** Gültige Meldungen zu [path] aus allen Vorschauen (zwei Vorschauen derselben Datei nur einmal) */
     fun forFile(path: String): List<Marked> {
         val key = canonical(path)
-        return bySource.values.flatMap { it[key].orEmpty() }.filter { it.marker.isValid }
+        return byOwner.values.flatMap { it[key].orEmpty() }.filter { it.marker.isValid }
+            .distinctBy { Triple(it.message.level, it.message.text, it.marker.startOffset) }
     }
 
     private fun mark(document: Document, message: RenderMessage): Marked? {

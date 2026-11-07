@@ -107,7 +107,7 @@ private class ScadCompletionProvider : CompletionProvider<CompletionParameters>(
         val callable = element as? ScadCallableDeclaration
         var builder = LookupElementBuilder.create(element, element.name!!)
             .withIcon(element.icon())
-            .withTypeText(element.containingFile?.name)
+            .withTypeText(ScadDocComments.of(element)?.summary ?: element.containingFile?.name)
         if (callable != null) {
             builder = builder.withTailText("(${callable.parameters.joinToString(", ") { it.signature() }})", true)
                 .withInsertHandler(parentheses(callable.parameters.isNotEmpty()))

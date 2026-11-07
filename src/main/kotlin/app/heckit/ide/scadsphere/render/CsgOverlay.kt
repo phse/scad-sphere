@@ -17,6 +17,9 @@ object CsgOverlay {
         return MODIFIER_IN_SOURCE.containsMatchIn(stripped)
     }
 
+    /** Der Code verwendet `$t` (Animation); Kommentare und Zeichenketten zählen nicht. */
+    fun usesTime(code: String): Boolean = TIME.containsMatchIn(code.replace(COMMENTS_AND_STRINGS, " "))
+
     /** Overlay als SCAD-Text oder null, wenn es keine `#`/`%`-Teile gibt. */
     fun build(csg: String): String? {
         if (!MARKER.containsMatchIn(csg)) return null
@@ -31,7 +34,10 @@ object CsgOverlay {
         }
     }
 
-    /** Nur Verschiebungen/Drehungen (`multmatrix`) der Eltern bleiben erhalten, CSG-Operationen nicht. */
+    /**
+     * Nur Verschiebungen/Drehungen (`multmatrix`) der Eltern bleiben erhalten, CSG-Operationen nicht. Extrusionen
+     * bleiben auch: Ein `#`-Teil darin ist 2D und erschiene sonst flach auf z = 0 statt als extrudierter Körper.
+     */
     private fun collect(nodes: List<Node>, transforms: List<String>, highlight: MutableList<String>, background: MutableList<String>) {
         for (node in nodes) {
             val target = when {
@@ -44,7 +50,7 @@ object CsgOverlay {
                 continue
             }
             val children = node.children ?: continue
-            val next = if (node.head.startsWith("multmatrix(")) transforms + node.head else transforms
+            val next = if (KEPT.any { node.head.startsWith(it) }) transforms + node.head else transforms
             collect(children, next, highlight, background)
         }
     }
@@ -132,6 +138,8 @@ object CsgOverlay {
         }
     }
 
+    private val TIME = Regex("""\${'$'}t\b""")
+    private val KEPT = listOf("multmatrix(", "linear_extrude(", "rotate_extrude(")
     private val COMMENTS_AND_STRINGS = Regex("""//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"""")
     private val MODIFIER_IN_SOURCE = Regex("""[#%]\s*[A-Za-z_]""")
     private val MARKER = Regex("""(?m)^\s*[#%]""")

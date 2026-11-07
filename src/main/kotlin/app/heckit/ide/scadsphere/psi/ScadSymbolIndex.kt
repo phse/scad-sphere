@@ -34,7 +34,8 @@ class ScadSymbolIndex : ScalarIndexExtension<String>() {
     }
 }
 
-/** Go to Symbol (⌘⌥O / Ctrl+Alt+Shift+N): Module und Funktionen aus allen .scad-Dateien des Projekts. */
+/** Go to Symbol (⌘⌥O / Ctrl+Alt+Shift+N): Module und Funktionen aus allen .scad-Dateien des Projekts
+ * und - mit „Include non-project items“ - der Bibliotheksordner ([ScadLibraryRootsProvider]). */
 class ScadSymbolContributor : ChooseByNameContributorEx {
     override fun processNames(processor: Processor<in String>, scope: GlobalSearchScope, filter: IdFilter?) {
         FileBasedIndex.getInstance().processAllKeys(ScadSymbolIndex.NAME, processor, scope, filter)
