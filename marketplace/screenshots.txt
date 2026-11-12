@@ -6,4 +6,4 @@
 05-3mf-dark: phone-stand.3mf dark
 06-section: phone-stand.scad nocustomizer section:x:0.5
 07-highlight-dark: shelf-bracket.scad dark nocustomizer measure:40,0,0;40,0,40
-08-parts: dresser.obj up:y
+08-parts: dresser.obj up:y select:top transform

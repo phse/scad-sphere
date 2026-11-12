@@ -7,7 +7,9 @@
 <p>
   <b>OpenSCAD</b> support that stays out of the way: highlighting, navigation and refactoring for <b>.scad</b> files,
   a live <b>3D preview</b> rendered with your installed OpenSCAD, a <b>Customizer</b> for the parameters, export to every format
-  OpenSCAD writes, and a viewer and converter for <b>.stl</b>, <b>.3mf</b>, <b>.obj</b>, <b>.off</b> and <b>.amf</b> files.
+  OpenSCAD writes, and a viewer and light <b>mesh editor</b> for <b>.stl</b>, <b>.3mf</b>, <b>.obj</b>, <b>.off</b> and <b>.amf</b> files.
+  Made for <b>3D printing</b> and parametric CAD: works with BOSL2 and NopSCADlib, and hands multi-color models to
+  Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura.
 </p>
 
 <h3>Editing</h3>
@@ -38,11 +40,21 @@
   <li>Animation of <code>$t</code> with play and slider; save the current view as PNG.</li>
   <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change.
       Convert them to another format (also several at once), or start a new .scad file that imports them.</li>
-  <li>Recolor parts: click a part or pick it from the list. OBJ colors are written to the <code>.mtl</code> (created if missing,
-      a part can get a material of its own), 3MF colors to <code>basematerials</code> and color groups.</li>
+  <li>Choose the up axis per file (Z, Y or X), e.g. Y for models from Blender or Sweet Home 3D.</li>
+</ul>
+
+<h3>Mesh editing</h3>
+<ul>
+  <li>Parts list grouped by material or color: select parts in the list or in the 3D view, show and hide them, filter by name.</li>
+  <li>Recolor with a live preview. OBJ colors are written to the <code>.mtl</code> (Wavefront OBJ/MTL, created if missing),
+      3MF colors to <code>basematerials</code> and color groups, AMF colors to materials and objects.</li>
+  <li>Rename and delete parts, give a part a material of its own or assign it to another one (also by drag and drop).</li>
+  <li>Move, rotate and scale a part or the whole model - relative or absolute, per axis or uniformly, around a chosen
+      origin (corner, edge or center). Works for STL (binary and ASCII), OFF, OBJ, 3MF and AMF.</li>
+  <li>Merge two OBJ or two 3MF files into one.</li>
+  <li>Every change is written to the file and can be undone with Undo (⌘Z / Ctrl+Z) in the view.</li>
   <li><b>.mtl</b> files: highlighting, color swatches with a color picker and folding per material; the 3D view of the
       <code>.obj</code> follows while you type.</li>
-  <li>Choose the up axis per file (Z, Y or X), e.g. Y for models from Blender or Sweet Home 3D.</li>
 </ul>
 
 <h3>Customizer</h3>
@@ -183,6 +195,8 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
             <reference ref="ScadSphere.Convert"/>
             <reference ref="ScadSphere.NewScadFromModel"/>
             <reference ref="ScadSphere.OpenInSlicer"/>
+            <separator/>
+            <action id="ScadSphere.MergeModel" class="app.heckit.ide.scadsphere.mesh.MergeModelAction"/>
         </group>
     </actions>
 </idea-plugin>

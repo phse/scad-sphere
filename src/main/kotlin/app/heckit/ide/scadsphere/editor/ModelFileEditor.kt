@@ -25,6 +25,7 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import app.heckit.ide.scadsphere.mesh.AmfEdits
 import app.heckit.ide.scadsphere.mesh.MeshColorEditing
 import app.heckit.ide.scadsphere.mesh.ObjColors
 import app.heckit.ide.scadsphere.mesh.Palette
@@ -86,6 +87,7 @@ class ModelFileEditor(private val project: Project, private val file: VirtualFil
                 .registerCustomShortcutSet(ActionManager.getInstance().getAction(id).shortcutSet, viewer.component, this)
         }
         viewer.onPalette = { action, key, part -> MeshColorEditing(project, file, viewer, root, currentPalette).handle(action, key, part) }
+        viewer.onTransform = { part, matrix -> MeshColorEditing(project, file, viewer, root, currentPalette).transform(part, matrix) }
         load(keepCamera = false)
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
@@ -143,7 +145,17 @@ class ModelFileEditor(private val project: Project, private val file: VirtualFil
                         currentPalette = palette
                         viewer.setPalette(palette)
                     }
-                    else -> viewer.showModel(bytes, format, keepCamera && loaded)
+                    else -> {
+                        viewer.showModel(bytes, format, keepCamera && loaded)
+                        // STL/OFF: keine Teile, nur Transformieren; AMF: Objekte und Farben wie bei 3MF
+                        val palette = when (format) {
+                            "amf" -> runCatching { AmfEdits.palette(bytes) }.onFailure { thisLogger().info("Farben aus ${file.path} nicht lesbar", it) }.getOrNull()
+                            "stl", "off" -> Palette(emptyList(), parts = false)
+                            else -> null
+                        }
+                        currentPalette = palette
+                        viewer.setPalette(palette)
+                    }
                 }
                 loaded = true
             }
@@ -196,6 +208,9 @@ class ModelFileEditor(private val project: Project, private val file: VirtualFil
         val available = if (redo) undo.isRedoAvailable(this) else undo.isUndoAvailable(this)
         if (available) if (redo) undo.redo(this) else undo.undo(this)
     }
+
+    /** Für den Screenshot-Helfer: Funktion im Viewer aufrufen (z. B. `selectPart`, `openTransform`). */
+    fun invokeViewer(function: String, argument: Any?) = viewer.invoke(function, argument)
 
     override fun getComponent(): JComponent = root
     override fun getPreferredFocusedComponent(): JComponent = viewer.component

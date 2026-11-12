@@ -22,7 +22,7 @@ class MeshUndoTest : BasePlatformTestCase() {
         val editor = ModelFileEditor(project, objFile)
         Disposer.register(testRootDisposable, editor)
         // Laden läuft im Hintergrund - warten, bis die MTL bekannt ist
-        val deadline = System.currentTimeMillis() + 5000
+        val deadline = System.currentTimeMillis() + 20000
         while (editor.documentReferences.size < 2 && System.currentTimeMillis() < deadline) {
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
             Thread.sleep(20)

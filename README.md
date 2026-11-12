@@ -117,11 +117,18 @@ loop or `let` it lives in).
 - **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled and hatched.
 - **Animation**: files that use `$t` get a bar with play, a slider and the number of steps. Each step is one OpenSCAD run
   with `-D $t=…`; computed steps are kept until the code, the Customizer or an included file changes.
-- **Parts and colors** (OBJ, 3MF): a list of the colors with the parts using them; click a part in the view or the
-  list to highlight it, click a swatch to pick a new color. OBJ colors go to `Kd` in the `.mtl` (a missing `.mtl` is
-  created; a part sharing a material can get one of its own), 3MF colors to `basematerials` or color groups. Every change
-  can be undone with ⌘Z / Ctrl+Z in the view. For slicer project files (Bambu Studio, OrcaSlicer) a hint says the
-  slicer may keep its own filament colors.
+- **Parts** (OBJ, 3MF, AMF): the parts grouped by material or color, with show/hide per part or material and a
+  filter from 15 parts on. Click a part in the list or the view to select it; click a swatch to pick a new color (OBJ:
+  `Kd` in the `.mtl`, created if missing; 3MF: `basematerials` or color groups; AMF: materials and object colors).
+  A selected part can be renamed, deleted, get a material of its own or be assigned to another material (also by
+  dragging it onto the material). For slicer project files (Bambu Studio, OrcaSlicer) a hint says the slicer may keep
+  its own filament colors.
+- **Transform** (OBJ, 3MF, AMF, STL, OFF): move, rotate and scale the selected part or the whole model - relative or
+  absolute, per axis or uniformly - around an origin chosen per axis (min, center, max); rows can be shown or hidden.
+  The axes are those of the file (with Y up, Y is the height). OBJ vertices shared with other parts are copied; 3MF
+  changes the build item transform.
+- **Merge With...** (toolbar above the model): appends another OBJ or 3MF file.
+- Every edit is written to the file and can be undone with ⌘Z / Ctrl+Z in the view.
 - **Up axis** per file: Z (OpenSCAD, slicers), Y (Blender, Sweet Home 3D, many OBJ files) or X; remembered by the IDE.
 - **.mtl files** open as text with highlighting, color swatches (color picker in the gutter) and folding per material;
   the 3D view of the `.obj` follows while you type.

@@ -89,6 +89,16 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.4.0</h3>
+            <ul>
+              <li>Mesh editing: parts list grouped by material or color with show/hide and a filter; rename and delete parts,
+                  assign a part to another material (also by drag and drop).</li>
+              <li>Transform tool: move, rotate and scale a part or the whole model, relative or absolute, per axis or
+                  uniformly, around a chosen origin; rows can be shown or hidden. Values follow the up axis of the file.</li>
+              <li>Merge two OBJ or two 3MF files.</li>
+              <li>STL (binary and ASCII) and OFF can be transformed; AMF gets the parts list, colors and all edit tools.</li>
+              <li>Every edit can be undone with Undo in the view.</li>
+            </ul>
             <h3>1.3.0</h3>
             <ul>
               <li>Recolor parts of OBJ and 3MF files: a color list in the viewer, click a part to highlight it, pick a new

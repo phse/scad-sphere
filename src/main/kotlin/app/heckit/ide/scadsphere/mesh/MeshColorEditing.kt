@@ -10,6 +10,7 @@ import com.intellij.openapi.command.undo.BasicUndoableAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ColorChooserService
 import com.intellij.ui.ColorPickerListener
@@ -31,6 +32,9 @@ class MeshColorEditing(
     fun handle(action: String, key: String?, part: String?) {
         runCatching {
             when (action) {
+                "rename" -> part?.let { renamePart(it) }
+                "delete" -> part?.let { deletePart(it) }
+                "assign" -> if (key != null && part != null) assignMaterial(key, part)
                 "color" -> key?.let { pickColor(it) }
                 "separate" -> if (key != null && part != null) separate(key, part)
                 "create" -> createMtl()
@@ -72,15 +76,70 @@ class MeshColorEditing(
                 }
                 editDocument(mtl.first) { ObjColors.setKd(it, entry.key, color) ?: it }
             }
-            "3mf" -> {
+            "3mf", "amf" -> {
                 val bytes = file.contentsToByteArray(false)
-                val updated = ThreeMfColors.setColor(bytes, entry.key, color) ?: return
+                val updated = (if (file.extension.equals("amf", true)) AmfEdits.setColor(bytes, entry.key, color) else ThreeMfColors.setColor(bytes, entry.key, color)) ?: return
                 WriteCommandAction.runWriteCommandAction(project, ScadSphereBundle.message("color.change"), null, {
                     writeUndoable(file, updated)
                 })
             }
         }
     }
+
+    /** Teil umbenennen: Gruppe (`g`/`o`) der OBJ bzw. `name` des 3MF-Objekts. */
+    private fun renamePart(part: String) {
+        val name = Messages.showInputDialog(project, ScadSphereBundle.message("parts.renamePrompt", part), ScadSphereBundle.message("parts.rename"), null, part, null)
+            ?.trim()?.takeIf { it.isNotEmpty() && it != part } ?: return
+        val updated = when (file.extension?.lowercase()) {
+            "obj" -> ObjEdits.rename(text(), part, name.replace(Regex("\\s+"), "_")).toByteArray(Charsets.UTF_8)
+            "3mf" -> ThreeMfEdits.rename(file.contentsToByteArray(false), part, name)
+            "amf" -> AmfEdits.rename(file.contentsToByteArray(false), part, name)
+            else -> null
+        } ?: return
+        WriteCommandAction.runWriteCommandAction(project, ScadSphereBundle.message("parts.rename"), null, { writeUndoable(file, updated) })
+        viewer.selectPart(if (file.extension.equals("obj", true)) name.replace(Regex("\\s+"), "_") else name)
+    }
+
+    /** Teil löschen (OBJ: Flächen der Gruppe; 3MF: aus dem Druck nehmen, also den Build-Eintrag). */
+    private fun deletePart(part: String) {
+        val updated = when (file.extension?.lowercase()) {
+            "obj" -> ObjEdits.delete(text(), part).toByteArray(Charsets.UTF_8)
+            "3mf" -> ThreeMfEdits.delete(file.contentsToByteArray(false), part)
+                ?: error(ScadSphereBundle.message("parts.deleteNotPossible", part))
+            "amf" -> AmfEdits.delete(file.contentsToByteArray(false), part)
+            else -> null
+        } ?: return
+        WriteCommandAction.runWriteCommandAction(project, ScadSphereBundle.message("parts.delete"), null, { writeUndoable(file, updated) })
+    }
+
+    /** Teil (bzw. ganzes Modell bei null) mit der Matrix aus dem Viewer verschieben, drehen oder skalieren. */
+    fun transform(part: String?, matrix: DoubleArray) {
+        runCatching {
+            val updated = when (file.extension?.lowercase()) {
+                "obj" -> ObjEdits.transformPart(text(), part, matrix).toByteArray(Charsets.UTF_8)
+                "3mf" -> ThreeMfEdits.transformPart(file.contentsToByteArray(false), part, matrix)
+                    ?: error(ScadSphereBundle.message("parts.transformNotPossible", part ?: ""))
+                "stl" -> StlEdits.transform(file.contentsToByteArray(false), matrix)
+                "off" -> OffEdits.transform(text(), matrix).toByteArray(Charsets.UTF_8)
+                "amf" -> AmfEdits.transform(file.contentsToByteArray(false), part, matrix) ?: return
+                else -> return
+            }
+            WriteCommandAction.runWriteCommandAction(project, ScadSphereBundle.message("transform.command"), null, { writeUndoable(file, updated) })
+        }.onFailure { MeshFiles.fail(project, it) }
+    }
+
+    /** Teil einem vorhandenen Material zuweisen (Gegenstück zu „Eigenes Material“). */
+    private fun assignMaterial(key: String, part: String) {
+        val updated = when (file.extension?.lowercase()) {
+            "obj" -> ObjColors.setGroupMaterial(text(), part, key).toByteArray(Charsets.UTF_8)
+            "3mf" -> ThreeMfEdits.assignMaterial(file.contentsToByteArray(false), part, key)
+            "amf" -> AmfEdits.assignMaterial(file.contentsToByteArray(false), part, key)
+            else -> null
+        } ?: return
+        WriteCommandAction.runWriteCommandAction(project, ScadSphereBundle.message("parts.assign"), null, { writeUndoable(file, updated) })
+    }
+
+    private fun text() = file.contentsToByteArray(false).toString(Charsets.UTF_8)
 
     /** Eigenes Material für [part]: Kopie des bisherigen (gleiche Farbe), danach lässt es sich einzeln umfärben. */
     private fun separate(key: String, part: String) {
@@ -117,18 +176,7 @@ class MeshColorEditing(
         })
     }
 
-    /**
-     * Binäre Modelldatei schreiben und als Undo-Schritt anmelden. Die Schritte hängen an der Modelldatei, ⌘Z im Viewer
-     * findet sie über [app.heckit.ide.scadsphere.editor.ModelFileEditor.getDocumentReferences].
-     */
-    private fun writeUndoable(target: VirtualFile, content: ByteArray) {
-        val before = target.contentsToByteArray(false)
-        target.setBinaryContent(content)
-        UndoManager.getInstance(project).undoableActionPerformed(object : BasicUndoableAction(file) {
-            override fun undo() = write { target.setBinaryContent(before) }
-            override fun redo() = write { target.setBinaryContent(content) }
-        })
-    }
+    private fun writeUndoable(target: VirtualFile, content: ByteArray) = MeshFiles.writeUndoable(project, file, target, content)
 
     /** Neue Datei anlegen (bzw. eine vorhandene überschreiben); Undo löscht sie wieder bzw. stellt den alten Inhalt her. */
     private fun createUndoable(dir: VirtualFile, name: String, content: ByteArray) {

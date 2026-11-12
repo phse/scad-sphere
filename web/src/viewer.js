@@ -5,7 +5,7 @@ import {
   AmbientLight, BackSide, Box3, BufferGeometry, Color, DirectionalLight, DoubleSide, EdgesGeometry, Float32BufferAttribute,
   FrontSide, GridHelper, Group, Line, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial, MeshPhongMaterial, Object3D,
   OrthographicCamera, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, Scene, ShapeGeometry, ShapePath, Sphere, SphereGeometry,
-  Vector2, Vector3, WebGLRenderer,
+  Vector2, Vector3, WebGLRenderer, Euler, Matrix4, Quaternion,
 } from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
@@ -30,6 +30,8 @@ const settings = {
   ortho: false,
   bed: true,
   parts: true,
+  transformRows: ['origin', 'move', 'rotate', 'scale'],
+  transformOrigin: ['mid', 'mid', 'min'],
   ...readStored(),
 }
 
@@ -126,10 +128,14 @@ new ResizeObserver(resize).observe(view)
 
 // --- Laden ---
 
+let currentFormat = null
+
 async function load({ url, format, keepCamera, overlayUrl, mtl, resourceBase, fileKey, up }) {
   const id = ++loadId
+  currentFormat = format
   if (fileKey !== undefined && fileKey !== currentFileKey) {
     currentFileKey = fileKey
+    hiddenParts.clear()
     upAxis = ['x', 'y', 'z'].includes(up) ? up : 'z'
   }
   let response
@@ -218,8 +224,12 @@ function parse(format, data, extra = {}) {
     }
     case '3mf':
       return styleLoaded(new ThreeMFLoader().parse(data))
-    case 'amf':
-      return styleLoaded(new AMFLoader().parse(data))
+    case 'amf': {
+      // Teile der AMF sind Objekte (Gruppen); ihre Meshes tragen den Namen des Objekts
+      const group = styleLoaded(new AMFLoader().parse(data))
+      group.traverse((child) => { if (child.isMesh && !child.name) child.name = child.parent?.name || '' })
+      return group
+    }
     case 'obj': {
       if (extra.mtlTexts?.length) return parseObjWithMaterials(data, extra.mtlTexts, extra.resourceBase)
       // Ohne .mtl: alles in der Modellfarbe, außer die Ecken bringen Farben mit (v x y z r g b)
@@ -404,7 +414,13 @@ function modelMaterial() {
 function setModel(object, keepCamera) {
   clearModel()
   model = upWrap(object)
+  // Eigene Materialien je Teil: Hervorheben trifft nur das gewählte Teil, nicht alle mit demselben Material
+  model.traverse((child) => {
+    if (!child.isMesh) return
+    child.material = Array.isArray(child.material) ? child.material.map((m) => m.clone()) : child.material.clone()
+  })
   orient(model)
+  if (hiddenParts.size) model.traverse((child) => { if (child.isMesh) child.visible = !hiddenParts.has(child.name) })
   scene.add(model)
   assignPalette()
   bounds = new Box3().setFromObject(model)
@@ -422,6 +438,11 @@ function setModel(object, keepCamera) {
   applySection()
   if (!keepCamera) fit('iso', false)
   updateOrthoFrustum()
+  if (pendingSelect && partNames().includes(pendingSelect)) { selectedPart = pendingSelect; pendingSelect = null }
+  if (selectedPart && !partNames().includes(selectedPart)) selectedPart = null
+  renderParts()
+  renderTransform()
+  applyHighlight()
   requestRender()
 }
 
@@ -671,6 +692,7 @@ const icons = {
   stop: '<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" fill-opacity=".35"/>',
   customizer: '<path d="M2.5 4h1M6.5 4h7M2.5 8h6.25M11.75 8h1.75M2.5 12h2.75M8.25 12h5.25"/><circle cx="5" cy="4" r="1.5"/><circle cx="10.25" cy="8" r="1.5"/><circle cx="6.75" cy="12" r="1.5"/>',
   bed: '<path d="M1.5 10.5 5 6.5h9.5L11 10.5z"/><path d="M1.5 10.5v1.5H11v-1.5M11 12l3.5-4V6.5"/>',
+  transform: '<path d="M8 1.5v13M1.5 8h13M8 1.5 6.3 3.2M8 1.5l1.7 1.7M8 14.5l-1.7-1.7M8 14.5l1.7-1.7M1.5 8l1.7-1.7M1.5 8l1.7 1.7M14.5 8l-1.7-1.7M14.5 8l-1.7 1.7"/>',
   parts: '<path d="M8 2a6 6 0 1 0 0 12c.9 0 1.3-.6 1.3-1.2 0-.8-.6-1-.6-1.8 0-.7.5-1.2 1.3-1.2h1.4A2.6 2.6 0 0 0 14 7.2C14 4.3 11.3 2 8 2z"/><circle cx="5" cy="7.5" r="1" fill="currentColor"/><circle cx="7.2" cy="4.8" r="1" fill="currentColor"/><circle cx="10.4" cy="5.4" r="1" fill="currentColor"/>',
   upZ: '<path d="M8 13.5V3M5.5 5.5 8 3l2.5 2.5"/><path d="M8 13.5 3 11M8 13.5l5-2.5" opacity=".45"/><text x="11.2" y="6.8" font-size="6.5" font-family="sans-serif" font-weight="600" fill="currentColor" stroke="none">Z</text>',
   upY: '<path d="M8 13.5V3M5.5 5.5 8 3l2.5 2.5"/><path d="M8 13.5 3 11M8 13.5l5-2.5" opacity=".45"/><text x="11.2" y="6.8" font-size="6.5" font-family="sans-serif" font-weight="600" fill="currentColor" stroke="none">Y</text>',
@@ -776,7 +798,10 @@ function toolbarEntries() {
     // Beim Abspielen kommt alle paar Millisekunden ein neues Modell - Messpunkte hielten nicht
     { name: 'measure', action: toggleMeasure, isOn: () => measure.on, enabled: () => hasModel && !timeAnimation?.playing,
       disabledTip: () => timeAnimation?.playing ? 'tool.measure.playing' : null, keep: 3 },
-    ...(palette ? [{ name: 'parts', action: toggleParts, isOn: () => settings.parts, keep: 5 }] : []),
+    ...(palette ? [
+      ...(palette.parts !== false ? [{ name: 'parts', action: toggleParts, isOn: () => settings.parts, keep: 5 }] : []),
+      { name: 'transform', action: toggleTransform, isOn: () => transformOpen, enabled: () => hasModel, keep: 4.5 },
+    ] : []),
     { name: 'section', action: toggleSection, isOn: () => section.on, enabled: () => hasModel, keep: 2 },
     { name: 'image', action: () => host.send({ type: 'image', data: snapshot() }), enabled: () => hasModel, keep: 0 },
     ...(tools ? [
@@ -1585,7 +1610,7 @@ function readStored() {
 
 function store() {
   try {
-    localStorage.setItem('scadsphere.settings', JSON.stringify({ colors: settings.colors, edges: settings.edges, grid: settings.grid, ortho: settings.ortho, bed: settings.bed, parts: settings.parts }))
+    localStorage.setItem('scadsphere.settings', JSON.stringify({ colors: settings.colors, edges: settings.edges, grid: settings.grid, ortho: settings.ortho, bed: settings.bed, parts: settings.parts, transformRows: settings.transformRows, transformOrigin: settings.transformOrigin }))
   } catch {
     // ohne Speicher eben nur für diese Sitzung
   }
@@ -1612,7 +1637,7 @@ function state() {
     measure: measure.points.map((p) => p.toArray()),
     section: section.on ? { axis: section.axis, value: section.value, flip: section.flip } : null,
     overlay: !!overlay,
-    palette: palette ? { open: settings.parts && !partsPanel.hidden, selected: selectedKey, part: selectedPart,
+    palette: palette ? { open: settings.parts && !partsPanel.hidden, part: selectedPart, transform: transformOpen,
       assigned: assignedKeys() } : null,
   }
 }
@@ -1644,9 +1669,8 @@ function setMeasure(points) {
 // --- Teile und Farben (OBJ mit MTL, 3MF): Liste der Materialien, Klick ins Modell wählt aus, Farbe wählt die IDE ---
 
 let palette = null          // { entries: [{ key, name, color, parts, matchName, matchColor }], hint, canSeparate }
-let selectedKey = null
 let selectedPart = null
-let hoverKey = null
+let hoverParts = new Set()
 const partsPanel = document.createElement('div')
 partsPanel.className = 'parts-panel'
 partsPanel.hidden = true
@@ -1693,11 +1717,12 @@ function assignedKeys() {
 }
 
 function setPalette(next) {
-  palette = next && (next.entries.length || next.canSeparate) ? next : null
-  if (palette && selectedKey && !palette.entries.some((e) => e.key === selectedKey)) selectedKey = null
+  palette = next && (next.entries.length || next.canSeparate || next.editable) ? next : null
+  if (selectedPart && !partNames().includes(selectedPart)) selectedPart = null
   assignPalette()
   buildToolbar()
   renderParts()
+  renderTransform()
 }
 
 function toggleParts() {
@@ -1708,27 +1733,203 @@ function toggleParts() {
   applyHighlight()
 }
 
-const separateSvg = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"><rect x="2" y="5" width="7" height="7" rx="1"/><path d="M7 2.5h5.5a1 1 0 0 1 1 1V9"/></svg>'
+const lineSvg = (path) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round">${path}</svg>`
+const partIcons = {
+  rename: '<path d="M2.5 13.5h3l7.5-7.5-3-3L2.5 10.5z"/><path d="M8.5 4.5l3 3"/>',
+  eye: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
+  hidden: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path d="M2.5 13.5l11-11"/>',
+  assign: '<circle cx="4.5" cy="8" r="2.5"/><path d="M8 8h6M11.5 5.5 14 8l-2.5 2.5"/>',
+  chevronRight: '<path d="M6 4l4 4-4 4"/>',
+  chevronDown: '<path d="M4 6l4 4 4-4"/>',
+  transform: '<path d="M8 1.5v13M1.5 8h13M8 1.5 6.3 3.2M8 1.5l1.7 1.7M8 14.5l-1.7-1.7M8 14.5l1.7-1.7M1.5 8l1.7-1.7M1.5 8l1.7 1.7M14.5 8l-1.7-1.7M14.5 8l-1.7 1.7"/>',
+  separate: '<rect x="2" y="5" width="7" height="7" rx="1"/><path d="M7 2.5h5.5a1 1 0 0 1 1 1V9"/>',
+  delete: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/>',
+  apply: '<path d="M3 8.5l3 3 7-7"/>',
+  close: '<path d="M4 4l8 8M12 4l-8 8"/>',
+}
+const hiddenParts = new Set()
+
+function iconButton(icon, tip, onClick, className = 'parts-undo') {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = className
+  button.dataset.tip = tip
+  button.innerHTML = lineSvg(partIcons[icon])
+  button.addEventListener('click', (event) => { event.stopPropagation(); onClick() })
+  return button
+}
+
+/** Benannte Teile des Modells in Dateireihenfolge (OBJ: Gruppen, 3MF: Objekte). */
+function partNames() {
+  const names = []
+  model?.traverse((child) => { if (child.isMesh && child.name && !names.includes(child.name)) names.push(child.name) })
+  return names
+}
+
+const partEntries = (name) => palette?.entries.filter((e) => e.parts.includes(name)) || []
+
+const expandedKeys = new Set()
+let partsFilter = ''
+let assignOpen = null   // Teil, dessen Liste „Material zuweisen“ offen ist
+let dragPart = null
+
+/** Gruppen der Liste: je Material seine Teile (nur Teile, die das Modell wirklich hat), am Ende Teile ohne Material. */
+function partGroups() {
+  const names = partNames()
+  const groups = []
+  const covered = new Set()
+  for (const entry of palette?.entries || []) {
+    const parts = entry.parts.filter((p) => names.includes(p))
+    if (!parts.length) continue
+    parts.forEach((p) => covered.add(p))
+    groups.push({ entry, parts })
+  }
+  const rest = names.filter((n) => !covered.has(n))
+  if (rest.length) groups.push({ entry: null, parts: rest })
+  return groups
+}
+
+function eyeButton(hidden, tip, onClick) {
+  const button = iconButton(hidden ? 'hidden' : 'eye', tip, onClick, 'parts-undo parts-eye')
+  button.classList.toggle('on', hidden)
+  return button
+}
+
+function swatchButton(entry, part) {
+  const swatch = document.createElement('button')
+  swatch.type = 'button'
+  swatch.className = 'swatch'
+  swatch.style.background = entry.color
+  swatch.dataset.tip = `${labels['parts.pick'] || 'Change color'}: ${entry.name}`
+  swatch.addEventListener('click', (event) => {
+    event.stopPropagation()
+    if (part) select(part)
+    host.send({ type: 'palette', action: 'color', key: entry.key })
+  })
+  return swatch
+}
+
+/** Ziel zum Hineinziehen: ein Teil auf ein Material ziehen weist es ihm zu. */
+function dropTarget(row, entry) {
+  if (!entry) return
+  row.addEventListener('dragover', (event) => {
+    if (!dragPart || partEntries(dragPart).some((e) => e.key === entry.key)) return
+    event.preventDefault()
+    row.classList.add('drop')
+  })
+  row.addEventListener('dragleave', () => row.classList.remove('drop'))
+  row.addEventListener('drop', (event) => {
+    event.preventDefault()
+    row.classList.remove('drop')
+    if (dragPart) assignMaterial(dragPart, entry.key)
+  })
+}
+
+function assignMaterial(part, key) {
+  assignOpen = null
+  host.send({ type: 'palette', action: 'assign', key, part })
+}
+
+function hoverOn(names) {
+  return {
+    enter: () => { hoverParts = new Set(names); applyHighlight() },
+    leave: () => { hoverParts = new Set(); applyHighlight() },
+  }
+}
+
+/** Zeile eines Teils; [entry]: sein Material in dieser Gruppe (Einzelzeile zeigt Farbfeld und Materialname). */
+function partRow(name, entry, single) {
+  const row = document.createElement('div')
+  row.className = 'parts-row' + (single ? '' : ' parts-child')
+  row.dataset.part = name
+  row.classList.toggle('selected', name === selectedPart)
+  row.classList.toggle('hidden-part', hiddenParts.has(name))
+  row.draggable = true
+  row.addEventListener('dragstart', (event) => { dragPart = name; event.dataTransfer.setData('text/plain', name) })
+  row.addEventListener('dragend', () => { dragPart = null })
+  if (single) {
+    // Platz des Aufklapp-Pfeils, damit die Farbfelder mit denen der Gruppen fluchten
+    row.appendChild(Object.assign(document.createElement('span'), { className: 'parts-chevron-space' }))
+    if (entry) row.appendChild(swatchButton(entry, name))
+    else row.appendChild(Object.assign(document.createElement('span'), { className: 'swatch none' }))
+    dropTarget(row, entry)
+  }
+  const text = document.createElement('div')
+  text.className = 'parts-text'
+  const label = document.createElement('div')
+  label.className = 'parts-name'
+  label.textContent = name
+  text.appendChild(label)
+  if (single && entry) {
+    const sub = document.createElement('div')
+    sub.className = 'parts-sub'
+    sub.textContent = entry.name
+    text.appendChild(sub)
+  }
+  row.appendChild(text)
+  const tools = document.createElement('div')
+  tools.className = 'row-tools'
+  if (name === selectedPart) {
+    tools.appendChild(iconButton('rename', labels['parts.renameTip'] || 'Rename', () => partAction('rename', name)))
+    if (palette?.entries.length) {
+      tools.appendChild(iconButton('assign', labels['parts.assignTip'] || 'Assign material', () => {
+        assignOpen = assignOpen === name ? null : name
+        renderParts()
+      }))
+    }
+    const shared = partEntries(name).find((e) => partGroups().find((g) => g.entry === e)?.parts.length > 1)
+    if (palette?.canSeparate && shared) {
+      tools.appendChild(iconButton('separate', labels['parts.separateTip'] || 'Own material for this part',
+        () => host.send({ type: 'palette', action: 'separate', key: shared.key, part: name })))
+    }
+    tools.appendChild(iconButton('delete', labels['parts.deleteTip'] || 'Delete', () => partAction('delete', name)))
+  }
+  tools.appendChild(eyeButton(hiddenParts.has(name), labels['parts.hideTip'] || 'Hide', () => {
+    if (hiddenParts.has(name)) hiddenParts.delete(name)
+    else hiddenParts.add(name)
+    applyHidden()
+    renderParts()
+  }))
+  row.appendChild(tools)
+  row.addEventListener('click', () => select(name === selectedPart ? null : name))
+  const hover = hoverOn([name])
+  row.addEventListener('pointerenter', hover.enter)
+  row.addEventListener('pointerleave', hover.leave)
+  return row
+}
+
+/** Liste „Material zuweisen“ unter dem gewählten Teil. */
+function assignList(name) {
+  const list = document.createElement('div')
+  list.className = 'parts-assign'
+  const current = new Set(partEntries(name).map((e) => e.key))
+  for (const entry of palette.entries) {
+    if (current.has(entry.key)) continue
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = 'parts-assign-item'
+    const swatch = document.createElement('span')
+    swatch.className = 'swatch'
+    swatch.style.background = entry.color
+    item.append(swatch, entry.name)
+    item.addEventListener('click', (event) => { event.stopPropagation(); assignMaterial(name, entry.key) })
+    list.appendChild(item)
+  }
+  return list
+}
 
 function renderParts() {
-  partsPanel.hidden = !palette || !settings.parts
+  partsPanel.hidden = !palette || palette.parts === false || !settings.parts
   if (partsPanel.hidden) return
+  const scroll = partsPanel.querySelector('.parts-list')?.scrollTop || 0
+  const focused = document.activeElement?.classList.contains('parts-search')
   partsPanel.textContent = ''
   const title = document.createElement('div')
   title.className = 'parts-title'
   const titleText = document.createElement('span')
-  titleText.textContent = labels['parts.title'] || 'Colors'
+  titleText.textContent = labels['parts.title'] || 'Parts'
   title.appendChild(titleText)
-  // Rückgängig/Wiederherstellen der Änderungen aus der Liste (dieselben Schritte wie ⌘Z/⇧⌘Z)
-  for (const [redo, path] of [[false, 'M5.5 4 2.5 7l3 3M2.5 7h7a4 4 0 0 1 0 8h-2'], [true, 'M10.5 4l3 3-3 3M13.5 7h-7a4 4 0 0 0 0 8h2']]) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'parts-undo'
-    button.dataset.tip = labels[redo ? 'parts.redo' : 'parts.undo'] || (redo ? 'Redo' : 'Undo')
-    button.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" transform="translate(0 -1.5)"><path d="${path}"/></svg>`
-    button.addEventListener('click', () => host.send({ type: 'undo', redo }))
-    title.appendChild(button)
-  }
+  title.appendChild(iconButton('close', labels['close'] || 'Close', toggleParts))
   partsPanel.appendChild(title)
   if (palette.hint) {
     const hint = document.createElement('div')
@@ -1736,7 +1937,7 @@ function renderParts() {
     hint.textContent = palette.hint
     partsPanel.appendChild(hint)
   }
-  if (!palette.entries.length) {
+  if (!palette.entries.length && palette.canSeparate) {
     const empty = document.createElement('div')
     empty.className = 'parts-hint'
     empty.textContent = labels['parts.empty'] || 'This file has no colors yet.'
@@ -1746,73 +1947,418 @@ function renderParts() {
     create.textContent = labels['parts.create'] || 'Create .mtl file'
     create.addEventListener('click', () => host.send({ type: 'palette', action: 'create' }))
     partsPanel.append(empty, create)
-    return
   }
+  const names = partNames()
+  // Suche ab 15 Teilen
+  if (names.length > 15) {
+    const search = document.createElement('input')
+    search.type = 'text'
+    search.className = 'parts-search'
+    search.placeholder = labels['parts.search'] || 'Filter parts'
+    search.value = partsFilter
+    search.addEventListener('input', () => { partsFilter = search.value; renderParts() })
+    partsPanel.appendChild(search)
+    if (focused) requestAnimationFrame(() => { search.focus(); search.setSelectionRange(search.value.length, search.value.length) })
+  } else {
+    partsFilter = ''
+  }
+  const filter = partsFilter.trim().toLowerCase()
   const list = document.createElement('div')
   list.className = 'parts-list'
-  for (const entry of palette.entries) {
-    const row = document.createElement('div')
-    row.className = 'parts-row'
-    row.dataset.key = entry.key
-    row.classList.toggle('selected', entry.key === selectedKey)
-    const swatch = document.createElement('button')
-    swatch.type = 'button'
-    swatch.className = 'swatch'
-    swatch.style.background = entry.color
-    swatch.dataset.tip = labels['parts.pick'] || 'Change color'
-    swatch.addEventListener('click', (event) => { event.stopPropagation(); select(entry.key, null); host.send({ type: 'palette', action: 'color', key: entry.key }) })
+  const [one, other = one] = (labels['parts.count'] || 'part|parts').split('|')
+  for (const { entry, parts } of partGroups()) {
+    const shown = filter ? parts.filter((p) => p.toLowerCase().includes(filter)) : parts
+    if (!shown.length) continue
+    if (parts.length === 1) {
+      list.appendChild(partRow(parts[0], entry, true))
+      if (assignOpen === parts[0] && parts[0] === selectedPart) list.appendChild(assignList(parts[0]))
+      continue
+    }
+    const key = entry?.key ?? ''
+    const open = expandedKeys.has(key) || !!filter || parts.includes(selectedPart)
+    const head = document.createElement('div')
+    head.className = 'parts-row parts-group'
+    const chevron = iconButton(open ? 'chevronDown' : 'chevronRight', '', () => {
+      if (expandedKeys.has(key)) expandedKeys.delete(key)
+      else expandedKeys.add(key)
+      renderParts()
+    }, 'parts-undo parts-chevron')
+    head.appendChild(chevron)
+    if (entry) head.appendChild(swatchButton(entry, null))
+    else head.appendChild(Object.assign(document.createElement('span'), { className: 'swatch none' }))
     const text = document.createElement('div')
     text.className = 'parts-text'
-    const name = document.createElement('div')
-    name.className = 'parts-name'
-    name.textContent = entry.name
-    const [one, other = one] = (labels['parts.count'] || 'part|parts').split('|')
-    const parts = document.createElement('div')
-    parts.className = 'parts-sub'
-    parts.textContent = entry.parts.length > 3 || !entry.parts.length
-      ? `${entry.parts.length} ${entry.parts.length === 1 ? one : other}`
-      : entry.parts.join(', ')
-    text.append(name, parts)
-    row.append(swatch, text)
-    // Ausgewähltes Teil mit geteiltem Material: eigenes Material anbieten
-    if (entry.key === selectedKey && selectedPart && palette.canSeparate && entry.parts.length > 1 && entry.parts.includes(selectedPart)) {
-      const separate = document.createElement('button')
-      separate.type = 'button'
-      separate.className = 'parts-separate'
-      separate.innerHTML = `${separateSvg}<span></span>`
-      separate.querySelector('span').textContent = `${selectedPart}: ${labels['parts.separate'] || 'Own material for this part'}`
-      separate.addEventListener('click', (event) => {
-        event.stopPropagation()
-        host.send({ type: 'palette', action: 'separate', key: entry.key, part: selectedPart })
-      })
-      text.appendChild(separate)
+    const label = document.createElement('div')
+    label.className = 'parts-name'
+    label.textContent = entry ? entry.name : (labels['parts.noMaterial'] || 'No material')
+    const sub = document.createElement('div')
+    sub.className = 'parts-sub'
+    sub.textContent = `${parts.length} ${parts.length === 1 ? one : other}`
+    text.append(label, sub)
+    head.appendChild(text)
+    const tools = document.createElement('div')
+    tools.className = 'row-tools'
+    const allHidden = parts.every((p) => hiddenParts.has(p))
+    tools.appendChild(eyeButton(allHidden, labels['parts.hideAllTip'] || 'Hide all parts with this material', () => {
+      parts.forEach((p) => allHidden ? hiddenParts.delete(p) : hiddenParts.add(p))
+      applyHidden()
+      renderParts()
+    }))
+    head.appendChild(tools)
+    head.classList.toggle('hidden-part', allHidden)
+    head.addEventListener('click', () => chevron.click())
+    const hover = hoverOn(parts)
+    head.addEventListener('pointerenter', hover.enter)
+    head.addEventListener('pointerleave', hover.leave)
+    dropTarget(head, entry)
+    list.appendChild(head)
+    if (!open) continue
+    for (const part of shown) {
+      list.appendChild(partRow(part, entry, false))
+      if (assignOpen === part && part === selectedPart) list.appendChild(assignList(part))
     }
-    row.addEventListener('click', () => select(entry.key === selectedKey && !selectedPart ? null : entry.key, null))
-    row.addEventListener('pointerenter', () => { hoverKey = entry.key; applyHighlight() })
-    row.addEventListener('pointerleave', () => { if (hoverKey === entry.key) { hoverKey = null; applyHighlight() } })
-    list.appendChild(row)
   }
   partsPanel.appendChild(list)
-  partsPanel.querySelector('.parts-row.selected')?.scrollIntoView({ block: 'nearest' })
+  list.scrollTop = scroll
+  list.querySelector('.parts-row.selected')?.scrollIntoView({ block: 'nearest' })
 }
 
-function select(key, part) {
-  selectedKey = key
+function partAction(action, part) {
+  host.send({ type: 'palette', action, part })
+  // Umbenennen: Auswahl bleibt (die IDE meldet den neuen Namen über selectPart), Löschen hebt sie auf
+  if (action === 'delete') select(null)
+}
+
+let pendingSelect = null
+
+/** Nach dem Umbenennen das Teil unter neuem Namen wählen, sobald das neu geladene Modell es hat. */
+function selectPart(name) {
+  pendingSelect = name
+  if (partNames().includes(name)) { pendingSelect = null; select(name) }
+}
+
+/** Ausgeblendete Teile (nach Namen) unsichtbar machen - die Datei bleibt, wie sie ist. */
+function applyHidden() {
+  model?.traverse((child) => { if (child.isMesh) child.visible = !hiddenParts.has(child.name) })
+  requestRender()
+}
+
+function select(part) {
+  if (part !== selectedPart) assignOpen = null
   selectedPart = part
   renderParts()
+  renderTransform()
   applyHighlight()
 }
 
-/** Ausgewählte bzw. überfahrene Farbe leicht aufhellen (nur bei offener Liste). */
+/** Ausgewähltes bzw. überfahrenes Teil leicht aufhellen (jedes Teil hat eigene Materialien, siehe setModel). */
 function applyHighlight() {
-  const active = settings.parts && palette ? (hoverKey || selectedKey) : null
+  const active = palette ? (hoverParts.size ? hoverParts : new Set(selectedPart ? [selectedPart] : [])) : new Set()
   const glow = new Color(theme.active || '#3574f0').multiplyScalar(0.45)
-  for (const material of materialsOf(model)) {
-    if (!material.emissive) continue
-    const on = active && material.userData.paletteKey === active
-    material.emissive.copy(on ? glow : new Color(0x000000))
+  model?.traverse((child) => {
+    if (!child.isMesh) return
+    const on = active.has(child.name)
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) material.emissive?.copy(on ? glow : new Color(0x000000))
+  })
+  requestRender()
+}
+
+// --- Werkzeug „Transformieren“: Verschieben, Drehen (relativ/absolut), Skalieren - je Zeile mit Übernehmen ---
+
+let transformOpen = false
+const transformMode = { move: 'rel', rotate: 'rel', scale: 'rel' }
+let transformSync = true
+const transformPanel = document.createElement('div')
+transformPanel.className = 'transform-panel'
+transformPanel.hidden = true
+document.body.appendChild(transformPanel)
+
+function openTransform(rows) {
+  // rows (Screenshot-Helfer): sichtbare Zeilen vorgeben
+  if (Array.isArray(rows)) { settings.transformRows = rows; store() }
+  transformOpen = true
+  renderTransform()
+  updateToolbar()
+}
+
+function toggleTransform() {
+  transformOpen = !transformOpen
+  renderTransform()
+  updateToolbar()
+}
+
+/** Meshes des Ziels: ausgewähltes Teil oder das ganze Modell. */
+function targetMeshes() {
+  const list = []
+  model?.traverse((child) => { if (child.isMesh && (!selectedPart || child.name === selectedPart)) list.push(child) })
+  return list
+}
+
+/** Umriss des Ziels in Koordinaten der Datei: Die Felder zeigen die Achsen der Datei (bei Y oben ist Y die Höhe). */
+function targetBox() {
+  const box = new Box3()
+  for (const mesh of targetMeshes()) box.expandByObject(mesh)
+  const root = fileRoot()
+  if (!root || box.isEmpty()) return box
+  root.updateMatrixWorld(true)
+  return box.applyMatrix4(root.matrixWorld.clone().invert())
+}
+
+/**
+ * Wohin Achse [fileAxis] der Datei in der Ansicht zeigt: Ansichtsachse und ob umgekehrt (bei Y oben zeigt Z der
+ * Datei nach vorne, also -Y der Ansicht). Der Bezugspunkt ist je Ansichtsachse gespeichert (links/vorne/unten …).
+ */
+function axisView(fileAxis) {
+  const root = fileRoot()
+  const direction = new Vector3().setComponent(fileAxis, 1)
+  if (root) direction.transformDirection(root.matrixWorld)
+  const view = [0, 1, 2].reduce((best, i) => Math.abs(direction.getComponent(i)) > Math.abs(direction.getComponent(best)) ? i : best, 0)
+  return { view, flip: direction.getComponent(view) < 0 }
+}
+
+const swapEnd = (mode) => mode === 'min' ? 'max' : mode === 'max' ? 'min' : mode
+
+function originLabels(fileAxis) {
+  const { view, flip } = axisView(fileAxis)
+  const axis = ['x', 'y', 'z'][view]
+  const names = (labels[`transform.origin.${axis}`] || 'min|mid|max').split('|')
+  const tips = (labels[`transform.originTip.${axis}`] || 'min|center|max').split('|')
+  return flip ? { names: names.reverse(), tips: tips.reverse() } : { names, tips }
+}
+
+/** Wurzel des Geladenen (in der Hülle): Ihr Koordinatensystem ist das der Datei. */
+const fileRoot = () => model?.children[0]
+
+/** 3MF-Objekt des Teils (Kind der Wurzel, trägt die Lage aus dem Build-Eintrag); null bei OBJ bzw. ganzem Modell. */
+function placedNode() {
+  if (currentFormat !== '3mf' || !selectedPart) return null
+  const root = fileRoot()
+  let node = targetMeshes()[0]
+  while (node && node.parent !== root) node = node.parent
+  return node || null
+}
+
+const round = (value, digits = 3) => String(Math.round(value * 10 ** digits) / 10 ** digits).replace(/^-0$/, '0')
+
+function renderTransform() {
+  transformPanel.hidden = !transformOpen || !palette || !model
+  if (transformPanel.hidden) { if (originMarker) showOrigin(null); return }
+  transformPanel.textContent = ''
+  const head = document.createElement('div')
+  head.className = 'parts-title transform-head'
+  const headText = document.createElement('span')
+  headText.textContent = `${labels['transform.title'] || 'Transform'}: ${selectedPart || labels['parts.whole'] || 'Whole model'}`
+  head.appendChild(headText)
+  // Umschalter: welche Zeilen zu sehen sind (mehrere gleichzeitig) - wer nur skaliert, spart Platz für die Ansicht
+  const switcher = document.createElement('span')
+  switcher.className = 'transform-switch'
+  for (const kind of ['origin', 'move', 'rotate', 'scale']) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = labels[`transform.${kind}`] || kind
+    const on = settings.transformRows.includes(kind)
+    button.classList.toggle('on', on)
+    button.addEventListener('click', () => {
+      const next = on ? settings.transformRows.filter((k) => k !== kind) : [...settings.transformRows, kind]
+      if (!next.some((k) => k !== 'origin')) return
+      settings.transformRows = next
+      store()
+      renderTransform()
+    })
+    switcher.appendChild(button)
+  }
+  head.appendChild(switcher)
+  head.appendChild(iconButton('close', labels['close'] || 'Close', toggleTransform))
+  transformPanel.appendChild(head)
+  const box = targetBox()
+  const center = box.isEmpty() ? new Vector3() : box.getCenter(new Vector3())
+  const size = box.isEmpty() ? new Vector3() : box.getSize(new Vector3())
+  const position = originPoint(box)
+  showOrigin(position)
+  const node = placedNode()
+  const rotation = node ? new Euler().setFromQuaternion(node.quaternion, 'XYZ') : null
+  const rows = [
+    { kind: 'move', unit: '', current: position, neutral: 0 },
+    { kind: 'rotate', unit: '°', current: rotation ? [rotation.x, rotation.y, rotation.z].map((r) => r * 180 / Math.PI) : null, neutral: 0 },
+    // Skalieren: relativ in Prozent, absolut als Zielmaß je Achse
+    { kind: 'scale', unit: transformMode.scale === 'abs' ? '' : '%', current: [size.x, size.y, size.z], neutral: 100 },
+  ]
+  // Bezugspunkt je Achse: Minimum (links/vorne/unten), Mitte oder Maximum - für Abs, Drehen und Skalieren
+  if (settings.transformRows.includes('origin')) {
+    const originName = document.createElement('span')
+    originName.className = 'transform-name'
+    originName.textContent = labels['transform.origin'] || 'Origin'
+    transformPanel.append(originName, document.createElement('span'))
+    ;['x', 'y', 'z'].forEach((axis, i) => {
+      const group = document.createElement('span')
+      group.className = 'transform-mode transform-origin'
+      const { names, tips } = originLabels(i)
+      ;['min', 'mid', 'max'].forEach((value, k) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.textContent = names[k]
+        button.dataset.tip = tips[k]
+        const { view, flip } = axisView(i)
+        const stored = flip ? swapEnd(value) : value
+        button.classList.toggle('on', settings.transformOrigin[view] === stored)
+        button.addEventListener('click', () => {
+          settings.transformOrigin = settings.transformOrigin.map((v, j) => j === view ? stored : v)
+          store()
+          renderTransform()
+        })
+        group.appendChild(button)
+      })
+      // Spalten wie die Eingabefelder: Achse | Feld | Einheit
+      transformPanel.append(document.createElement('span'), group, document.createElement('span'))
+    })
+    transformPanel.appendChild(document.createElement('span'))
+  }
+  for (const row of rows.filter((r) => settings.transformRows.includes(r.kind))) {
+    const name = document.createElement('span')
+    name.className = 'transform-name'
+    name.textContent = labels[`transform.${row.kind}`] || row.kind
+    transformPanel.appendChild(name)
+    const absAllowed = row.kind !== 'rotate' || !!row.current
+    if (!absAllowed) transformMode.rotate = 'rel'
+    const toggle = document.createElement('span')
+    toggle.className = 'transform-mode'
+    for (const mode of ['rel', 'abs']) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = labels[`transform.${mode}`] || mode
+      button.classList.toggle('on', transformMode[row.kind] === mode)
+      button.disabled = mode === 'abs' && !absAllowed
+      if (button.disabled) button.dataset.tip = labels['transform.noAbsRotation'] || ''
+      else if (mode === 'abs') button.dataset.tip = labels[`transform.absHint.${row.kind}`] || ''
+      button.addEventListener('click', () => { transformMode[row.kind] = mode; renderTransform() })
+      toggle.appendChild(button)
+    }
+    transformPanel.appendChild(toggle)
+    const abs = transformMode[row.kind] === 'abs'
+    const inputs = []
+    ;['X', 'Y', 'Z'].forEach((axis, i) => {
+      transformPanel.appendChild(Object.assign(document.createElement('span'), { className: 'transform-axis', textContent: axis }))
+      const input = document.createElement('input')
+      input.type = 'text'
+      input.inputMode = 'decimal'
+      input.value = abs ? round(row.current[i], row.kind === 'rotate' ? 2 : 3) : String(row.neutral)
+      input.addEventListener('keydown', (event) => { if (event.key === 'Enter') apply() })
+      // Synchron skalieren: die anderen Achsen im selben Verhältnis mitziehen
+      if (row.kind === 'scale') {
+        input.addEventListener('input', () => {
+          const value = Number(input.value.replace(',', '.'))
+          if (!transformSync || !Number.isFinite(value)) return
+          inputs.forEach((other, k) => {
+            if (k === i) return
+            other.value = abs ? round(row.current[i] ? row.current[k] * value / row.current[i] : row.current[k], 3) : input.value
+          })
+        })
+      }
+      inputs.push(input)
+      const unit = document.createElement('span')
+      unit.className = 'transform-unit'
+      unit.textContent = row.unit
+      transformPanel.append(input, unit)
+    })
+    const apply = () => {
+      const values = inputs.map((input) => Number(input.value.replace(',', '.')))
+      if (values.some((v) => !Number.isFinite(v))) return
+      if (row.kind === 'scale') {
+        const factors = values.map((v, i) => abs ? (row.current[i] ? v / row.current[i] : 1) : v / 100)
+        if (factors.some((f) => f <= 0)) return
+        applyTransform('scale', 'rel', factors, position)
+      } else {
+        applyTransform(row.kind, transformMode[row.kind], values, position)
+      }
+      // Relativ: Felder gleich wieder auf den neutralen Wert für den nächsten Schritt; absolut füllt das Neuladen
+      if (!abs) inputs.forEach((input) => { input.value = String(row.neutral) })
+    }
+    transformPanel.appendChild(iconButton('apply', labels['transform.apply'] || 'Apply', apply))
+  }
+  // Synchron (nur Skalieren): eine Achse ändern zieht die anderen mit
+  if (!settings.transformRows.includes('scale')) return
+  const sync = document.createElement('label')
+  sync.className = 'transform-sync'
+  const check = document.createElement('input')
+  check.type = 'checkbox'
+  check.checked = transformSync
+  check.addEventListener('change', () => { transformSync = check.checked })
+  sync.append(check, labels['transform.sync'] || 'Scale uniformly')
+  transformPanel.appendChild(sync)
+}
+
+/** Bezugspunkt der Auswahl laut Einstellung (Weltkoordinaten der Ansicht). */
+function originPoint(box) {
+  if (box.isEmpty()) return [0, 0, 0]
+  return ['x', 'y', 'z'].map((axis, i) => {
+    const { view, flip } = axisView(i)
+    const mode = flip ? swapEnd(settings.transformOrigin[view]) : settings.transformOrigin[view]
+    return mode === 'min' ? box.min[axis] : mode === 'max' ? box.max[axis] : (box.min[axis] + box.max[axis]) / 2
+  })
+}
+
+let originMarker = null
+
+/** Bezugspunkt als kleiner Punkt in der Ansicht (null: ausblenden). */
+function showOrigin(point) {
+  if (originMarker) {
+    scene.remove(originMarker)
+    originMarker.geometry.dispose()
+    originMarker.material.dispose()
+    originMarker = null
+  }
+  if (point) {
+    const radius = Math.max((hasModel ? bounds.getSize(new Vector3()).length() : 50) / 200, 0.05)
+    originMarker = new Mesh(new SphereGeometry(radius, 12, 8), new MeshBasicMaterial({ color: theme.active || '#3574f0', depthTest: false }))
+    originMarker.position.set(...point)
+    const root = fileRoot()
+    if (root) originMarker.position.applyMatrix4(root.matrixWorld)
+    originMarker.renderOrder = 10
+    scene.add(originMarker)
   }
   requestRender()
+}
+
+/** Matrix in Weltkoordinaten bilden, in die der Datei umrechnen und an die IDE geben (die schreibt die Datei). */
+function applyTransform(kind, mode, values, position) {
+  const root = fileRoot()
+  if (!root) return
+  root.updateMatrixWorld(true)
+  let file
+  if (kind === 'rotate' && mode === 'abs') {
+    // Absolut (3MF): Drehung des Objekts auf die Zielwinkel setzen, um seine Mitte (in Dateikoordinaten)
+    const node = placedNode()
+    if (!node) return
+    const target = new Quaternion().setFromEuler(new Euler(...values.map((v) => v * Math.PI / 180), 'XYZ'))
+    const delta = target.multiply(node.quaternion.clone().invert())
+    const centerFile = new Vector3(...position)
+    file = new Matrix4().makeTranslation(centerFile.x, centerFile.y, centerFile.z)
+      .multiply(new Matrix4().makeRotationFromQuaternion(delta))
+      .multiply(new Matrix4().makeTranslation(-centerFile.x, -centerFile.y, -centerFile.z))
+  } else {
+    let world
+    if (kind === 'move') {
+      const d = mode === 'abs' ? values.map((v, i) => v - position[i]) : values
+      if (d.every((v) => v === 0)) return
+      world = new Matrix4().makeTranslation(d[0], d[1], d[2])
+    } else {
+      const pivot = new Vector3(...position)
+      const around = (matrix) => new Matrix4().makeTranslation(pivot.x, pivot.y, pivot.z).multiply(matrix).multiply(new Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z))
+      if (kind === 'scale') {
+        // values: Faktoren je Achse der Ansicht
+        if (values.every((f) => f === 1)) return
+        world = around(new Matrix4().makeScale(values[0], values[1], values[2]))
+      } else {
+        if (values.every((v) => v === 0)) return
+        world = around(new Matrix4().makeRotationFromEuler(new Euler(...values.map((v) => v * Math.PI / 180), 'XYZ')))
+      }
+    }
+    // Werte und Umriss sind schon in Koordinaten der Datei
+    file = world
+  }
+  const e = file.elements
+  const matrix = [0, 1, 2].flatMap((r) => [0, 1, 2, 3].map((c) => e[c * 4 + r]))
+  host.send({ type: 'transform', part: selectedPart, matrix })
 }
 
 /** Farbwähler der IDE bewegt sich: Farbe sofort zeigen (null: wieder die aus der Datei). */
@@ -1831,25 +2377,17 @@ function previewColor({ key, color }) {
 let partsDown = null
 renderer.domElement.addEventListener('pointerdown', (event) => { partsDown = { x: event.clientX, y: event.clientY } })
 renderer.domElement.addEventListener('pointerup', (event) => {
-  if (!palette || !settings.parts || measure.on || !partsDown || event.button !== 0 || !model) return
+  if (!palette || palette.parts === false || measure.on || !partsDown || event.button !== 0 || !model) return
   const moved = Math.hypot(event.clientX - partsDown.x, event.clientY - partsDown.y)
   partsDown = null
   if (moved > 4) return
   const rect = renderer.domElement.getBoundingClientRect()
   raycaster.setFromCamera(new Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1), camera)
-  const hit = raycaster.intersectObject(model, true).find((h) => !section.on || clipPlane.distanceToPoint(h.point) >= -1e-6)
-  if (!hit) { select(null, null); return }
-  const materials = Array.isArray(hit.object.material) ? hit.object.material : [hit.object.material]
-  const material = materials[hit.face?.materialIndex ?? 0] || materials[0]
-  let key = material?.userData.paletteKey
-  if (!key && material?.vertexColors && hit.face && hit.object.geometry.attributes.color) {
-    const color = new Color().fromBufferAttribute(hit.object.geometry.attributes.color, hit.face.a)
-    key = nearest(palette.entries.filter((e) => e.matchName === null), color)?.key
-  }
-  select(key || null, key ? (hit.object.name || null) : null)
+  const hit = raycaster.intersectObject(model, true).find((h) => h.object.visible && (!section.on || clipPlane.distanceToPoint(h.point) >= -1e-6))
+  select(hit?.object.name || null)
 })
 
-window.scadSphere = { load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor }
+window.scadSphere = { load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform }
 
 if (init.theme) setTheme(init.theme)
 else scene.background = new Color('#f7f8fa')

@@ -148,6 +148,9 @@ class ModelViewer(parent: Disposable) : Disposable {
     /** Farben der Teile für die Seitenleiste (OBJ, 3MF); null blendet sie aus. */
     fun setPalette(palette: Any?) = call("setPalette", palette)
 
+    /** Teil wählen, sobald das neu geladene Modell es hat (nach dem Umbenennen). */
+    fun selectPart(name: String) = call("selectPart", name)
+
     /** Farbe eines Eintrags sofort zeigen, auch während ein modaler Farbwähler offen ist (null: zurück zur Datei). */
     fun previewColor(key: String, color: String?) {
         if (ready) execute("window.scadSphere && window.scadSphere.previewColor(${gson.toJson(mapOf("key" to key, "color" to color))})")
@@ -158,6 +161,9 @@ class ModelViewer(parent: Disposable) : Disposable {
 
     /** Seitenleiste „Teile“: `color` (Farbe wählen), `separate` (eigenes Material für [part]), `create` (MTL anlegen). */
     var onPalette: ((action: String, key: String?, part: String?) -> Unit)? = null
+
+    /** Werkzeug „Transformieren“: Matrix (3×4, zeilenweise, Koordinaten der Datei) für [part] bzw. null = ganzes Modell. */
+    var onTransform: ((part: String?, matrix: DoubleArray) -> Unit)? = null
 
     /** Kleiner Hinweis oben links mit Ladekreis (z. B. „Rechnet…“); null blendet ihn aus. */
     fun setStatus(text: String?) = call("setStatus", text)
@@ -228,6 +234,9 @@ class ModelViewer(parent: Disposable) : Disposable {
             "palette" -> message.get("action")?.asString?.let { action ->
                 onPalette?.invoke(action, message.get("key")?.takeIf { !it.isJsonNull }?.asString, message.get("part")?.takeIf { !it.isJsonNull }?.asString)
             }
+            "transform" -> message.get("matrix")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asDouble }?.takeIf { it.size == 12 }?.let { matrix ->
+                onTransform?.invoke(message.get("part")?.takeIf { !it.isJsonNull }?.asString, matrix.toDoubleArray())
+            }
             "up" -> message.get("value")?.asString?.let { value ->
                 fileKey?.let { PropertiesComponent.getInstance().setValue(UP_KEY + it, value, "z") }
             }
@@ -259,7 +268,7 @@ class ModelViewer(parent: Disposable) : Disposable {
         "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
         "tool.image", "tool.image.none", "animation.play", "animation.pause", "animation.steps", "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
         "tool.parts", "tool.parts.none", "parts.title", "parts.pick", "parts.separate", "parts.empty", "parts.create", "parts.count",
-        "parts.undo", "parts.redo", "tool.up", "tool.upZ", "tool.upY", "tool.upX",
+        "parts.selected", "parts.renameTip", "parts.hideTip", "parts.deleteTip", "parts.assignTip", "parts.hideAllTip", "parts.search", "parts.noMaterial", "close", "parts.whole", "parts.separateTip", "tool.transform", "transform.title", "transform.move", "transform.rotate", "transform.scale", "transform.rel", "transform.abs", "transform.apply", "transform.absHint.rotate", "transform.absHint.scale", "transform.sync", "transform.origin", "transform.origin.x", "transform.origin.y", "transform.origin.z", "transform.originTip.x", "transform.originTip.y", "transform.originTip.z", "transform.noAbsRotation", "tool.up", "tool.upZ", "tool.upY", "tool.upX",
     ).associateWith { ScadSphereBundle.message("viewer.$it") }
 
     private fun applyTheme() {

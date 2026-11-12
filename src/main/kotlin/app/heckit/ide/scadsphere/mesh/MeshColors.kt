@@ -28,7 +28,7 @@ data class PaletteEntry(
  * [hint]: Hinweis über der Liste (z. B. Projekt-3MF eines Slicers). [canSeparate]: einzelnen Teilen lässt sich ein
  * eigenes Material geben (OBJ).
  */
-data class Palette(val entries: List<PaletteEntry>, val hint: String? = null, val canSeparate: Boolean = false)
+data class Palette(val entries: List<PaletteEntry>, val hint: String? = null, val canSeparate: Boolean = false, val editable: Boolean = true, val parts: Boolean = true)
 
 /** OBJ mit MTL: Gruppen (`g`/`o`) und ihre Materialien (`usemtl`), Farben aus `Kd`. */
 object ObjColors {
