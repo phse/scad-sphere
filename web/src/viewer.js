@@ -11,6 +11,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js'
 import { AMFLoader } from 'three/addons/loaders/AMFLoader.js'
 import { parseOff } from './offLoader.js'
 
@@ -28,6 +29,7 @@ const settings = {
   grid: true,
   ortho: false,
   bed: true,
+  parts: true,
   ...readStored(),
 }
 
@@ -41,7 +43,7 @@ try {
   empty.textContent = labels.noWebGl || 'WebGL is not available.'
   empty.hidden = false
   const noop = () => {}
-  window.scadSphere = { load: noop, setTools: noop, setTheme: noop, setStatus: noop, showEmpty: noop, setMessages: noop, expandMessages: noop, fit: noop, snapshot: noop, state: noop, setBed: noop, setAnimation: noop }
+  window.scadSphere = { load: noop, setTools: noop, setTheme: noop, setStatus: noop, showEmpty: noop, setMessages: noop, expandMessages: noop, fit: noop, snapshot: noop, state: noop, setBed: noop, setAnimation: noop, setPalette: noop, previewColor: noop }
   host.send({ type: 'error', message: String(error) })
   host.send({ type: 'ready' })
   throw error
@@ -124,8 +126,12 @@ new ResizeObserver(resize).observe(view)
 
 // --- Laden ---
 
-async function load({ url, format, keepCamera, overlayUrl }) {
+async function load({ url, format, keepCamera, overlayUrl, mtl, resourceBase, fileKey, up }) {
   const id = ++loadId
+  if (fileKey !== undefined && fileKey !== currentFileKey) {
+    currentFileKey = fileKey
+    upAxis = ['x', 'y', 'z'].includes(up) ? up : 'z'
+  }
   let response
   try {
     response = await fetch(url, { cache: 'no-store' })
@@ -135,10 +141,20 @@ async function load({ url, format, keepCamera, overlayUrl }) {
     return
   }
   const data = TEXT_FORMATS.has(format) ? await response.text() : await response.arrayBuffer()
+  // Materialdateien der OBJ (fehlende überspringen: dann eben in der Modellfarbe)
+  const mtlTexts = []
+  for (const mtlUrl of (format === 'obj' && mtl) || []) {
+    try {
+      const mtlResponse = await fetch(mtlUrl, { cache: 'no-store' })
+      if (mtlResponse.ok) mtlTexts.push(await mtlResponse.text())
+    } catch {
+      // weiter ohne
+    }
+  }
   if (id !== loadId) return
   let object
   try {
-    object = parse(format, data)
+    object = parse(format, data, { mtlTexts, resourceBase })
   } catch (error) {
     showError(labels.parseError ? `${labels.parseError}\n${error.message || error}` : String(error))
     return
@@ -155,7 +171,8 @@ async function load({ url, format, keepCamera, overlayUrl }) {
   }
   setModel(object, keepCamera && hasModel)
   if (overlayObject) {
-    overlay = overlayObject
+    overlay = upWrap(overlayObject)
+    orient(overlay)
     scene.add(overlay)
     applySection()
     requestRender()
@@ -192,7 +209,7 @@ function styleOverlay(group) {
 
 const TEXT_FORMATS = new Set(['svg', 'obj', 'off'])
 
-function parse(format, data) {
+function parse(format, data, extra = {}) {
   switch (format) {
     case 'stl': {
       const geometry = new STLLoader().parse(data)
@@ -204,6 +221,7 @@ function parse(format, data) {
     case 'amf':
       return styleLoaded(new AMFLoader().parse(data))
     case 'obj': {
+      if (extra.mtlTexts?.length) return parseObjWithMaterials(data, extra.mtlTexts, extra.resourceBase)
       // Ohne .mtl: alles in der Modellfarbe, außer die Ecken bringen Farben mit (v x y z r g b)
       const group = new Group()
       new OBJLoader().parse(data).traverse((child) => {
@@ -222,6 +240,33 @@ function parse(format, data) {
     default:
       throw new Error(`Unknown format ${format}`)
   }
+}
+
+/** OBJ mit MTL: Farben (Kd) und Texturen (map_Kd) aus der Materialdatei; nicht definierte Materialien in der Modellfarbe. */
+function parseObjWithMaterials(data, mtlTexts, resourceBase) {
+  const loader = new MTLLoader()
+  loader.setResourcePath(resourceBase || '')
+  const creator = loader.parse(mtlTexts.join('\n'), resourceBase || '')
+  creator.preload()
+  const known = new Set(Object.keys(creator.materialsInfo))
+  const group = new Group()
+  new OBJLoader().setMaterials(creator).parse(data).traverse((child) => {
+    if (!child.isMesh) return
+    const style = (material) => {
+      if (!known.has(material.name)) {
+        const plain = objMaterial(child)
+        plain.name = material.name
+        return plain
+      }
+      material.side = DoubleSide
+      material.flatShading = true
+      material.needsUpdate = true
+      return material
+    }
+    child.material = Array.isArray(child.material) ? child.material.map(style) : style(child.material)
+    group.add(child.clone())
+  })
+  return group
 }
 
 function single(geometry, vertexColors) {
@@ -358,8 +403,10 @@ function modelMaterial() {
 
 function setModel(object, keepCamera) {
   clearModel()
-  model = object
+  model = upWrap(object)
+  orient(model)
   scene.add(model)
+  assignPalette()
   bounds = new Box3().setFromObject(model)
   hasModel = !bounds.isEmpty()
   modelHasColors = detectColors(model)
@@ -624,6 +671,10 @@ const icons = {
   stop: '<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" fill-opacity=".35"/>',
   customizer: '<path d="M2.5 4h1M6.5 4h7M2.5 8h6.25M11.75 8h1.75M2.5 12h2.75M8.25 12h5.25"/><circle cx="5" cy="4" r="1.5"/><circle cx="10.25" cy="8" r="1.5"/><circle cx="6.75" cy="12" r="1.5"/>',
   bed: '<path d="M1.5 10.5 5 6.5h9.5L11 10.5z"/><path d="M1.5 10.5v1.5H11v-1.5M11 12l3.5-4V6.5"/>',
+  parts: '<path d="M8 2a6 6 0 1 0 0 12c.9 0 1.3-.6 1.3-1.2 0-.8-.6-1-.6-1.8 0-.7.5-1.2 1.3-1.2h1.4A2.6 2.6 0 0 0 14 7.2C14 4.3 11.3 2 8 2z"/><circle cx="5" cy="7.5" r="1" fill="currentColor"/><circle cx="7.2" cy="4.8" r="1" fill="currentColor"/><circle cx="10.4" cy="5.4" r="1" fill="currentColor"/>',
+  upZ: '<path d="M8 13.5V3M5.5 5.5 8 3l2.5 2.5"/><path d="M8 13.5 3 11M8 13.5l5-2.5" opacity=".45"/><text x="11.2" y="6.8" font-size="6.5" font-family="sans-serif" font-weight="600" fill="currentColor" stroke="none">Z</text>',
+  upY: '<path d="M8 13.5V3M5.5 5.5 8 3l2.5 2.5"/><path d="M8 13.5 3 11M8 13.5l5-2.5" opacity=".45"/><text x="11.2" y="6.8" font-size="6.5" font-family="sans-serif" font-weight="600" fill="currentColor" stroke="none">Y</text>',
+  upX: '<path d="M8 13.5V3M5.5 5.5 8 3l2.5 2.5"/><path d="M8 13.5 3 11M8 13.5l5-2.5" opacity=".45"/><text x="11.2" y="6.8" font-size="6.5" font-family="sans-serif" font-weight="600" fill="currentColor" stroke="none">X</text>',
   measure: '<path d="M2 11.5 11.5 2l2.5 2.5L4.5 14z"/><path d="M5 8.5l1.2 1.2M7 6.5l1.7 1.7M9 4.5l1.2 1.2"/>',
   section: '<path d="M8 1.8 13.5 5v6.2L8 14.3 2.5 11.2V5z" opacity=".45"/><path d="M1 8.5h14" /><path d="M2.5 8.5 8 11.6l5.5-3.1L8 5.4z" fill="currentColor" fill-opacity=".35"/>',
   display: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
@@ -646,6 +697,67 @@ const viewItems = [
   { name: 'left', action: () => fit('left') },
   { name: 'back', action: () => fit('back') },
 ]
+// --- Achse oben je Datei (OBJ aus Blender, SweetHome3D o. Ä. haben Y oben; Viewer, Druckbett und Ansichten denken in Z) ---
+
+let currentFileKey = null
+let upAxis = 'z'
+
+/** Die IDE merkt sich die Wahl je Datei (IDE-Einstellung, übersteht jeden Neustart - anders als localStorage). */
+function storeUp() {
+  if (currentFileKey) host.send({ type: 'up', value: upAxis })
+}
+
+/** Eigene Hülle um das Geladene: Die Drehung überschreibt so keine Drehung, die ein Loader am Objekt gesetzt hat. */
+function upWrap(object) {
+  if (object.userData.upWrapper) return object
+  const wrapper = new Group()
+  wrapper.userData.upWrapper = true
+  wrapper.add(object)
+  return wrapper
+}
+
+/** Modell so drehen, dass die gewählte Achse nach oben (Z der Szene) zeigt. */
+function orient(object) {
+  // Y oben: +90° um X (Y → Z, +Z zeigt dann nach vorn zu -Y); X oben: -90° um Y (X → Z)
+  object.rotation.set(upAxis === 'y' ? Math.PI / 2 : 0, upAxis === 'x' ? -Math.PI / 2 : 0, 0)
+  object.updateMatrixWorld(true)
+}
+
+function setUp(axis) {
+  if (upAxis === axis) return
+  upAxis = axis
+  storeUp()
+  if (!model) { updateToolbar(); return }
+  // Wie ein neues Modell: Größe, Raster, Druckbett, Kanten, Schnitt und Kamera neu
+  const object = model
+  const keepOverlay = overlay
+  scene.remove(object)
+  orient(object)
+  if (keepOverlay) orient(keepOverlay)
+  removeCaps()
+  if (edges) { scene.remove(edges); edges.traverse((c) => c.geometry?.dispose()); edges = null }
+  scene.add(object)
+  bounds = new Box3().setFromObject(model)
+  hasModel = !bounds.isEmpty()
+  updateGrid()
+  updateBed()
+  if (settings.edges) buildEdges()
+  updateInfo()
+  clearMeasure()
+  updateSectionRange()
+  applySection()
+  fit('iso', false)
+  updateOrthoFrustum()
+  updateToolbar()
+  requestRender()
+}
+
+const upItems = [
+  { name: 'upZ', icon: 'upZ', action: () => setUp('z'), isOn: () => upAxis === 'z' },
+  { name: 'upY', icon: 'upY', action: () => setUp('y'), isOn: () => upAxis === 'y' },
+  { name: 'upX', icon: 'upX', action: () => setUp('x'), isOn: () => upAxis === 'x' },
+]
+
 const displayItems = [
   { name: 'colors', action: toggleColors, isOn: () => settings.colors, enabled: () => modelHasColors },
   { name: 'edges', action: toggleEdges, isOn: () => settings.edges },
@@ -659,10 +771,12 @@ function toolbarEntries() {
     { name: 'fit', action: () => fit(null), keep: 9 },
     { name: 'views', icon: 'iso', items: viewItems, keep: 8 },
     { name: 'display', items: displayItems, keep: 4 },
+    { name: 'up', icon: () => `up${upAxis.toUpperCase()}`, items: upItems, keep: 3.5 },
     'sep',
     // Beim Abspielen kommt alle paar Millisekunden ein neues Modell - Messpunkte hielten nicht
     { name: 'measure', action: toggleMeasure, isOn: () => measure.on, enabled: () => hasModel && !timeAnimation?.playing,
       disabledTip: () => timeAnimation?.playing ? 'tool.measure.playing' : null, keep: 3 },
+    ...(palette ? [{ name: 'parts', action: toggleParts, isOn: () => settings.parts, keep: 5 }] : []),
     { name: 'section', action: toggleSection, isOn: () => section.on, enabled: () => hasModel, keep: 2 },
     { name: 'image', action: () => host.send({ type: 'image', data: snapshot() }), enabled: () => hasModel, keep: 0 },
     ...(tools ? [
@@ -688,6 +802,7 @@ function isEnabled(entry) {
 
 function iconOf(entry) {
   if (entry.name === 'render' && tools?.rendering) return 'stop'
+  if (typeof entry.icon === 'function') return entry.icon()
   return entry.icon || entry.name
 }
 
@@ -1158,6 +1273,15 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   if (point) addMeasurePoint(point)
   else clearMeasure()
 })
+// ⌘Z/⇧⌘Z (Strg+Z/Strg+Y): Der eingebettete Browser behält die Tasten, die IDE sieht sie nicht - an das Plugin geben
+document.addEventListener('keydown', (event) => {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+  const key = event.key.toLowerCase()
+  const redo = (key === 'z' && event.shiftKey) || (key === 'y' && event.ctrlKey && !event.metaKey)
+  if (key !== 'z' && !redo) return
+  event.preventDefault()
+  host.send({ type: 'undo', redo })
+})
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return
   if (measure.points.length) clearMeasure()
@@ -1461,7 +1585,7 @@ function readStored() {
 
 function store() {
   try {
-    localStorage.setItem('scadsphere.settings', JSON.stringify({ colors: settings.colors, edges: settings.edges, grid: settings.grid, ortho: settings.ortho, bed: settings.bed }))
+    localStorage.setItem('scadsphere.settings', JSON.stringify({ colors: settings.colors, edges: settings.edges, grid: settings.grid, ortho: settings.ortho, bed: settings.bed, parts: settings.parts }))
   } catch {
     // ohne Speicher eben nur für diese Sitzung
   }
@@ -1488,6 +1612,8 @@ function state() {
     measure: measure.points.map((p) => p.toArray()),
     section: section.on ? { axis: section.axis, value: section.value, flip: section.flip } : null,
     overlay: !!overlay,
+    palette: palette ? { open: settings.parts && !partsPanel.hidden, selected: selectedKey, part: selectedPart,
+      assigned: assignedKeys() } : null,
   }
 }
 
@@ -1515,7 +1641,215 @@ function setMeasure(points) {
   requestRender()
 }
 
-window.scadSphere = { load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation }
+// --- Teile und Farben (OBJ mit MTL, 3MF): Liste der Materialien, Klick ins Modell wählt aus, Farbe wählt die IDE ---
+
+let palette = null          // { entries: [{ key, name, color, parts, matchName, matchColor }], hint, canSeparate }
+let selectedKey = null
+let selectedPart = null
+let hoverKey = null
+const partsPanel = document.createElement('div')
+partsPanel.className = 'parts-panel'
+partsPanel.hidden = true
+document.body.appendChild(partsPanel)
+
+const colorDistance = (a, b) => (a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2
+
+/** Nächstliegender Eintrag zur Farbe [color] unter [candidates] (Rundung beim Laden verschiebt um wenige Stufen). */
+function nearest(candidates, color) {
+  let best = null
+  let bestDistance = Infinity
+  for (const entry of candidates) {
+    const distance = colorDistance(new Color(entry.color), color)
+    if (distance < bestDistance) { bestDistance = distance; best = entry }
+  }
+  return best
+}
+
+function materialsOf(object) {
+  const list = []
+  object?.traverse((child) => {
+    if (!child.isMesh) return
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) list.push(material)
+  })
+  return list
+}
+
+/** Jedem Material seinen Eintrag zuordnen (userData.paletteKey). */
+function assignPalette() {
+  if (!model) return
+  for (const material of materialsOf(model)) {
+    delete material.userData.paletteKey
+    if (!palette || material.vertexColors) continue
+    const original = material.userData.original?.color || material.color
+    const byName = palette.entries.filter((e) => e.matchName !== null && e.matchName === material.name)
+    const entry = byName.length && byName[0].matchColor ? nearest(byName, original) : byName[0]
+    if (entry) material.userData.paletteKey = entry.key
+  }
+  applyHighlight()
+}
+
+function assignedKeys() {
+  return [...new Set(materialsOf(model).map((m) => m.userData.paletteKey).filter(Boolean))]
+}
+
+function setPalette(next) {
+  palette = next && (next.entries.length || next.canSeparate) ? next : null
+  if (palette && selectedKey && !palette.entries.some((e) => e.key === selectedKey)) selectedKey = null
+  assignPalette()
+  buildToolbar()
+  renderParts()
+}
+
+function toggleParts() {
+  settings.parts = !settings.parts
+  store()
+  updateToolbar()
+  renderParts()
+  applyHighlight()
+}
+
+const separateSvg = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"><rect x="2" y="5" width="7" height="7" rx="1"/><path d="M7 2.5h5.5a1 1 0 0 1 1 1V9"/></svg>'
+
+function renderParts() {
+  partsPanel.hidden = !palette || !settings.parts
+  if (partsPanel.hidden) return
+  partsPanel.textContent = ''
+  const title = document.createElement('div')
+  title.className = 'parts-title'
+  const titleText = document.createElement('span')
+  titleText.textContent = labels['parts.title'] || 'Colors'
+  title.appendChild(titleText)
+  // Rückgängig/Wiederherstellen der Änderungen aus der Liste (dieselben Schritte wie ⌘Z/⇧⌘Z)
+  for (const [redo, path] of [[false, 'M5.5 4 2.5 7l3 3M2.5 7h7a4 4 0 0 1 0 8h-2'], [true, 'M10.5 4l3 3-3 3M13.5 7h-7a4 4 0 0 0 0 8h2']]) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'parts-undo'
+    button.dataset.tip = labels[redo ? 'parts.redo' : 'parts.undo'] || (redo ? 'Redo' : 'Undo')
+    button.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" transform="translate(0 -1.5)"><path d="${path}"/></svg>`
+    button.addEventListener('click', () => host.send({ type: 'undo', redo }))
+    title.appendChild(button)
+  }
+  partsPanel.appendChild(title)
+  if (palette.hint) {
+    const hint = document.createElement('div')
+    hint.className = 'parts-hint'
+    hint.textContent = palette.hint
+    partsPanel.appendChild(hint)
+  }
+  if (!palette.entries.length) {
+    const empty = document.createElement('div')
+    empty.className = 'parts-hint'
+    empty.textContent = labels['parts.empty'] || 'This file has no colors yet.'
+    const create = document.createElement('button')
+    create.type = 'button'
+    create.className = 'parts-create'
+    create.textContent = labels['parts.create'] || 'Create .mtl file'
+    create.addEventListener('click', () => host.send({ type: 'palette', action: 'create' }))
+    partsPanel.append(empty, create)
+    return
+  }
+  const list = document.createElement('div')
+  list.className = 'parts-list'
+  for (const entry of palette.entries) {
+    const row = document.createElement('div')
+    row.className = 'parts-row'
+    row.dataset.key = entry.key
+    row.classList.toggle('selected', entry.key === selectedKey)
+    const swatch = document.createElement('button')
+    swatch.type = 'button'
+    swatch.className = 'swatch'
+    swatch.style.background = entry.color
+    swatch.dataset.tip = labels['parts.pick'] || 'Change color'
+    swatch.addEventListener('click', (event) => { event.stopPropagation(); select(entry.key, null); host.send({ type: 'palette', action: 'color', key: entry.key }) })
+    const text = document.createElement('div')
+    text.className = 'parts-text'
+    const name = document.createElement('div')
+    name.className = 'parts-name'
+    name.textContent = entry.name
+    const [one, other = one] = (labels['parts.count'] || 'part|parts').split('|')
+    const parts = document.createElement('div')
+    parts.className = 'parts-sub'
+    parts.textContent = entry.parts.length > 3 || !entry.parts.length
+      ? `${entry.parts.length} ${entry.parts.length === 1 ? one : other}`
+      : entry.parts.join(', ')
+    text.append(name, parts)
+    row.append(swatch, text)
+    // Ausgewähltes Teil mit geteiltem Material: eigenes Material anbieten
+    if (entry.key === selectedKey && selectedPart && palette.canSeparate && entry.parts.length > 1 && entry.parts.includes(selectedPart)) {
+      const separate = document.createElement('button')
+      separate.type = 'button'
+      separate.className = 'parts-separate'
+      separate.innerHTML = `${separateSvg}<span></span>`
+      separate.querySelector('span').textContent = `${selectedPart}: ${labels['parts.separate'] || 'Own material for this part'}`
+      separate.addEventListener('click', (event) => {
+        event.stopPropagation()
+        host.send({ type: 'palette', action: 'separate', key: entry.key, part: selectedPart })
+      })
+      text.appendChild(separate)
+    }
+    row.addEventListener('click', () => select(entry.key === selectedKey && !selectedPart ? null : entry.key, null))
+    row.addEventListener('pointerenter', () => { hoverKey = entry.key; applyHighlight() })
+    row.addEventListener('pointerleave', () => { if (hoverKey === entry.key) { hoverKey = null; applyHighlight() } })
+    list.appendChild(row)
+  }
+  partsPanel.appendChild(list)
+  partsPanel.querySelector('.parts-row.selected')?.scrollIntoView({ block: 'nearest' })
+}
+
+function select(key, part) {
+  selectedKey = key
+  selectedPart = part
+  renderParts()
+  applyHighlight()
+}
+
+/** Ausgewählte bzw. überfahrene Farbe leicht aufhellen (nur bei offener Liste). */
+function applyHighlight() {
+  const active = settings.parts && palette ? (hoverKey || selectedKey) : null
+  const glow = new Color(theme.active || '#3574f0').multiplyScalar(0.45)
+  for (const material of materialsOf(model)) {
+    if (!material.emissive) continue
+    const on = active && material.userData.paletteKey === active
+    material.emissive.copy(on ? glow : new Color(0x000000))
+  }
+  requestRender()
+}
+
+/** Farbwähler der IDE bewegt sich: Farbe sofort zeigen (null: wieder die aus der Datei). */
+function previewColor({ key, color }) {
+  const entry = palette?.entries.find((e) => e.key === key)
+  for (const material of materialsOf(model)) {
+    if (material.userData.paletteKey !== key) continue
+    const target = new Color(color || entry?.color || theme.model)
+    if (material.userData.original) material.userData.original.color.copy(target)
+    if (settings.colors) material.color.copy(target)
+  }
+  requestRender()
+}
+
+// Klick ins Modell (ohne Ziehen, nicht beim Messen) wählt die Farbe des Teils
+let partsDown = null
+renderer.domElement.addEventListener('pointerdown', (event) => { partsDown = { x: event.clientX, y: event.clientY } })
+renderer.domElement.addEventListener('pointerup', (event) => {
+  if (!palette || !settings.parts || measure.on || !partsDown || event.button !== 0 || !model) return
+  const moved = Math.hypot(event.clientX - partsDown.x, event.clientY - partsDown.y)
+  partsDown = null
+  if (moved > 4) return
+  const rect = renderer.domElement.getBoundingClientRect()
+  raycaster.setFromCamera(new Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1), camera)
+  const hit = raycaster.intersectObject(model, true).find((h) => !section.on || clipPlane.distanceToPoint(h.point) >= -1e-6)
+  if (!hit) { select(null, null); return }
+  const materials = Array.isArray(hit.object.material) ? hit.object.material : [hit.object.material]
+  const material = materials[hit.face?.materialIndex ?? 0] || materials[0]
+  let key = material?.userData.paletteKey
+  if (!key && material?.vertexColors && hit.face && hit.object.geometry.attributes.color) {
+    const color = new Color().fromBufferAttribute(hit.object.geometry.attributes.color, hit.face.a)
+    key = nearest(palette.entries.filter((e) => e.matchName === null), color)?.key
+  }
+  select(key || null, key ? (hit.object.name || null) : null)
+})
+
+window.scadSphere = { load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor }
 
 if (init.theme) setTheme(init.theme)
 else scene.background = new Color('#f7f8fa')

@@ -65,7 +65,7 @@ import javax.swing.JComponent
  * Rechts daneben der Customizer, sofern die Datei Parameter hat.
  */
 class ScadPreviewEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor {
-    private val viewer = ModelViewer(this)
+    private val viewer = ModelViewer(this).also { it.fileKey = file.path }
     private val alarm = Alarm(this)
     private val parseAlarm = Alarm(this)
     private val document = FileDocumentManager.getInstance().getDocument(file)

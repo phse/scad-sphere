@@ -117,6 +117,14 @@ loop or `let` it lives in).
 - **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled and hatched.
 - **Animation**: files that use `$t` get a bar with play, a slider and the number of steps. Each step is one OpenSCAD run
   with `-D $t=…`; computed steps are kept until the code, the Customizer or an included file changes.
+- **Parts and colors** (OBJ, 3MF): a list of the colors with the parts using them; click a part in the view or the
+  list to highlight it, click a swatch to pick a new color. OBJ colors go to `Kd` in the `.mtl` (a missing `.mtl` is
+  created; a part sharing a material can get one of its own), 3MF colors to `basematerials` or color groups. Every change
+  can be undone with ⌘Z / Ctrl+Z in the view. For slicer project files (Bambu Studio, OrcaSlicer) a hint says the
+  slicer may keep its own filament colors.
+- **Up axis** per file: Z (OpenSCAD, slicers), Y (Blender, Sweet Home 3D, many OBJ files) or X; remembered by the IDE.
+- **.mtl files** open as text with highlighting, color swatches (color picker in the gutter) and folding per material;
+  the 3D view of the `.obj` follows while you type.
 - Size of the model in mm (bounding box) and the number of triangles at the bottom left.
 - Files reload when they change on disk (e.g. after an export).
 - **Convert To ▸** (toolbar above the model, project tree, also for several files): OpenSCAD imports the model and

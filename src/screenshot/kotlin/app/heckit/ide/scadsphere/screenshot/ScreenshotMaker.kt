@@ -28,7 +28,7 @@ import javax.swing.JFrame
  * Erzeugt Screenshots in der Sandbox-IDE (./gradlew runIde -Pscreenshots=...). Zeichnet den Frame selbst in ein
  * Bild, braucht also keine Bildschirmaufnahme-Rechte. Welche Dateien, steht in marketplace/screenshots.txt
  * (bzw. `screenshots.txt` im Projekt bei -PscreenshotProject), je Zeile
- * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:x,y,z;x,y,z]` (`set:` ändert
+ * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:x,y,z;x,y,z] [up:y]` (`set:` ändert
  * Customizer-Werte, `export:` nimmt zusätzlich den Export-Dialog für das Format auf, als `bildname-dialog.png`).
  * Ist nur in Builds mit -Pscreenshots enthalten.
  */
@@ -82,6 +82,10 @@ object ScreenshotMaker {
                 ApplicationManager.getApplication().messageBus.syncPublisher(CustomizerVisibilityListener.TOPIC).changed()
                 ScadFileStates.of(project).setCustomizer(file, overrides, null, null)
                 theme(laf, dark)
+                // up:y bzw. up:x: Achse oben für Mesh-Dateien (wie vom Nutzer im Viewer gewählt)
+                words.firstOrNull { it.startsWith("up:") }?.let {
+                    com.intellij.ide.util.PropertiesComponent.getInstance().setValue("scadsphere.upAxis.${file.path}", it.removePrefix("up:"), "z")
+                }
                 // Nur die Datei des Schritts offen (auch kein „What's New“)
                 FileEditorManager.getInstance(project).openFiles.forEach { FileEditorManager.getInstance(project).closeFile(it) }
                 FileEditorManager.getInstance(project).openFile(file, true)

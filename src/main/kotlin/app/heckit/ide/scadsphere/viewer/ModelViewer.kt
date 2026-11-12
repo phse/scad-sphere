@@ -7,6 +7,7 @@ import app.heckit.ide.scadsphere.render.RenderMessage
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.intellij.ide.ui.LafManagerListener
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
@@ -83,7 +84,7 @@ class ModelViewer(parent: Disposable) : Disposable {
                 ApplicationManager.getApplication().invokeLater({ onMessage(request) }, { disposed })
                 JBCefJSQuery.Response("")
             }
-            browser.jbCefClient.addRequestHandler(ViewerResources(::initScript) { id -> models[id] }, browser.cefBrowser)
+            browser.jbCefClient.addRequestHandler(ViewerResources(::initScript) { id -> models[id] ?: siblingFile(id) }, browser.cefBrowser)
             browser.jbCefClient.addContextMenuHandler(NoContextMenu, browser.cefBrowser)
             val connection = ApplicationManager.getApplication().messageBus.connect(this)
             connection.subscribe(LafManagerListener.TOPIC, LafManagerListener { applyTheme() })
@@ -93,19 +94,70 @@ class ModelViewer(parent: Disposable) : Disposable {
         }
     }
 
-    /** Modell anzeigen; [format]: `stl`, `3mf`, `obj`, `off`, `amf` oder `svg` (2D von OpenSCAD). [keepCamera]: Blickwinkel behalten. */
-    fun showModel(bytes: ByteArray, format: String, keepCamera: Boolean, overlay: ByteArray? = null) {
+    /**
+     * Modell anzeigen; [format]: `stl`, `3mf`, `obj`, `off`, `amf` oder `svg` (2D von OpenSCAD). [keepCamera]: Blickwinkel behalten.
+     * [mtl]: Materialdateien einer OBJ (Name relativ zur OBJ → Inhalt, z. B. der ungespeicherte Stand im Editor);
+     * [siblings] liefert weitere Dateien neben der OBJ (Texturen aus der MTL).
+     */
+    fun showModel(
+        bytes: ByteArray,
+        format: String,
+        keepCamera: Boolean,
+        overlay: ByteArray? = null,
+        mtl: Map<String, ByteArray> = emptyMap(),
+        siblings: ((String) -> ByteArray?)? = null,
+    ) {
         val number = modelCounter.incrementAndGet()
         val id = "$number.$format"
         val overlayId = "$number-overlay.3mf"
-        models = if (overlay != null) mapOf(id to bytes, overlayId to overlay) else mapOf(id to bytes)
+        val next = linkedMapOf(id to bytes)
+        if (overlay != null) next[overlayId] = overlay
+        mtl.forEach { (name, content) -> next["$number/files/$name"] = content }
+        models = next
+        siblingFiles = siblings?.let { "$number/files/" to it }
         call("load", mapOf(
             "url" to "${ViewerResources.ORIGIN}/model/$id",
             "format" to format,
             "keepCamera" to keepCamera,
             "overlayUrl" to overlay?.let { "${ViewerResources.ORIGIN}/model/$overlayId" },
+            "mtl" to mtl.keys.map { "${ViewerResources.ORIGIN}/model/$number/files/${encodePath(it)}" },
+            "resourceBase" to "${ViewerResources.ORIGIN}/model/$number/files/",
+            "fileKey" to fileKey,
+            "up" to fileKey?.let { PropertiesComponent.getInstance().getValue(UP_KEY + it, "z") },
         ))
     }
+
+    /** Kennung der Datei (Pfad): Darunter merkt sich die IDE die Achse oben (`PropertiesComponent`). */
+    @Volatile
+    var fileKey: String? = null
+
+    @Volatile
+    private var siblingFiles: Pair<String, (String) -> ByteArray?>? = null
+
+    private fun siblingFile(id: String): ByteArray? {
+        val (prefix, resolve) = siblingFiles ?: return null
+        if (!id.startsWith(prefix)) return null
+        val name = id.removePrefix(prefix)
+        if (name.split('/', '\\').any { it == ".." }) return null
+        return resolve(name)
+    }
+
+    private fun encodePath(path: String): String =
+        path.split('/').joinToString("/") { java.net.URLEncoder.encode(it, Charsets.UTF_8).replace("+", "%20") }
+
+    /** Farben der Teile für die Seitenleiste (OBJ, 3MF); null blendet sie aus. */
+    fun setPalette(palette: Any?) = call("setPalette", palette)
+
+    /** Farbe eines Eintrags sofort zeigen, auch während ein modaler Farbwähler offen ist (null: zurück zur Datei). */
+    fun previewColor(key: String, color: String?) {
+        if (ready) execute("window.scadSphere && window.scadSphere.previewColor(${gson.toJson(mapOf("key" to key, "color" to color))})")
+    }
+
+    /** ⌘Z bzw. ⇧⌘Z im Viewer (true: Wiederherstellen). */
+    var onUndo: ((redo: Boolean) -> Unit)? = null
+
+    /** Seitenleiste „Teile“: `color` (Farbe wählen), `separate` (eigenes Material für [part]), `create` (MTL anlegen). */
+    var onPalette: ((action: String, key: String?, part: String?) -> Unit)? = null
 
     /** Kleiner Hinweis oben links mit Ladekreis (z. B. „Rechnet…“); null blendet ihn aus. */
     fun setStatus(text: String?) = call("setStatus", text)
@@ -173,6 +225,13 @@ class ModelViewer(parent: Disposable) : Disposable {
             }
             "image" -> message.get("data")?.asString?.substringAfter("base64,", "")?.takeIf { it.isNotEmpty() }
                 ?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }?.let { onImage?.invoke(it) }
+            "palette" -> message.get("action")?.asString?.let { action ->
+                onPalette?.invoke(action, message.get("key")?.takeIf { !it.isJsonNull }?.asString, message.get("part")?.takeIf { !it.isJsonNull }?.asString)
+            }
+            "up" -> message.get("value")?.asString?.let { value ->
+                fileKey?.let { PropertiesComponent.getInstance().setValue(UP_KEY + it, value, "z") }
+            }
+            "undo" -> onUndo?.invoke(message.get("redo")?.asBoolean == true)
             "error" -> thisLogger().warn("Viewer: ${message.get("message")}")
         }
     }
@@ -199,6 +258,8 @@ class ModelViewer(parent: Disposable) : Disposable {
         "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.section", "tool.section.none",
         "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
         "tool.image", "tool.image.none", "animation.play", "animation.pause", "animation.steps", "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
+        "tool.parts", "tool.parts.none", "parts.title", "parts.pick", "parts.separate", "parts.empty", "parts.create", "parts.count",
+        "parts.undo", "parts.redo", "tool.up", "tool.upZ", "tool.upY", "tool.upX",
     ).associateWith { ScadSphereBundle.message("viewer.$it") }
 
     private fun applyTheme() {
@@ -240,7 +301,10 @@ class ModelViewer(parent: Disposable) : Disposable {
     override fun dispose() {
         disposed = true
     }
+
 }
+
+private const val UP_KEY = "scadsphere.upAxis."
 
 /** Chromiums Kontextmenü (Zurück, Neu laden, …) hat im Viewer nichts verloren. */
 private object NoContextMenu : CefContextMenuHandlerAdapter() {

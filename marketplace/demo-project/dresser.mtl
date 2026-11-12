@@ -1,0 +1,80 @@
+newmtl body
+Ka 0.2 0.2 0.2
+Kd 0.930 0.930 0.910
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl top
+Ka 0.2 0.2 0.2
+Kd 0.620 0.450 0.300
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl plinth
+Ka 0.2 0.2 0.2
+Kd 0.250 0.250 0.260
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl handle
+Ka 0.2 0.2 0.2
+Kd 0.250 0.250 0.260
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl drawer_box
+Ka 0.2 0.2 0.2
+Kd 0.850 0.840 0.800
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl rail
+Ka 0.2 0.2 0.2
+Kd 0.550 0.550 0.550
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl front_1
+Ka 0.2 0.2 0.2
+Kd 0.380 0.560 0.640
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl front_2
+Ka 0.2 0.2 0.2
+Kd 0.930 0.930 0.910
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl front_3
+Ka 0.2 0.2 0.2
+Kd 0.380 0.560 0.640
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+
+newmtl front_4
+Ka 0.2 0.2 0.2
+Kd 0.930 0.930 0.910
+Ks 0.05 0.05 0.05
+Ns 10
+d 1
+illum 2
+

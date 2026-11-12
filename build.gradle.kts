@@ -89,6 +89,15 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.3.0</h3>
+            <ul>
+              <li>Recolor parts of OBJ and 3MF files: a color list in the viewer, click a part to highlight it, pick a new
+                  color with live preview. OBJ colors are written to the <code>.mtl</code> (created if missing, a part can
+                  get a material of its own), 3MF colors to <code>basematerials</code> and color groups. Undo with ⌘Z in the view.</li>
+              <li><code>.mtl</code> files: own file type with highlighting, color swatches with a color picker and folding per
+                  material; the 3D view of the OBJ follows while you type.</li>
+              <li>Up axis per file (Z, Y or X) for models from Blender, Sweet Home 3D and other Y-up tools.</li>
+            </ul>
             <h3>1.2.0</h3>
             <ul>
               <li>Animation: files using <code>${'$'}t</code> get a play bar in the viewer; each step is one OpenSCAD run,

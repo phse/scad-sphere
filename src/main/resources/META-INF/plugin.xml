@@ -38,6 +38,11 @@
   <li>Animation of <code>$t</code> with play and slider; save the current view as PNG.</li>
   <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change.
       Convert them to another format (also several at once), or start a new .scad file that imports them.</li>
+  <li>Recolor parts: click a part or pick it from the list. OBJ colors are written to the <code>.mtl</code> (created if missing,
+      a part can get a material of its own), 3MF colors to <code>basematerials</code> and color groups.</li>
+  <li><b>.mtl</b> files: highlighting, color swatches with a color picker and folding per material; the 3D view of the
+      <code>.obj</code> follows while you type.</li>
+  <li>Choose the up axis per file (Z, Y or X), e.g. Y for models from Blender or Sweet Home 3D.</li>
 </ul>
 
 <h3>Customizer</h3>
@@ -73,6 +78,7 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
 
     <extensions defaultExtensionNs="com.intellij">
         <!-- Fehler- und Freeze-Berichte der Nutzer landen im Marketplace (Reiter Freezes bzw. Errors). -->
+        <actionPromoter implementation="app.heckit.ide.scadsphere.editor.ViewerUndoPromoter"/>
         <errorHandler implementation="com.intellij.diagnostic.JetBrainsMarketplaceErrorReportSubmitter"/>
 
         <fileType name="heckit.OpenSCAD" language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadFileType"
@@ -82,6 +88,14 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <fileType name="heckit.OBJ" implementationClass="app.heckit.ide.scadsphere.lang.ObjFileType" fieldName="INSTANCE" extensions="obj"/>
         <fileType name="heckit.OFF" implementationClass="app.heckit.ide.scadsphere.lang.OffFileType" fieldName="INSTANCE" extensions="off"/>
         <fileType name="heckit.AMF" implementationClass="app.heckit.ide.scadsphere.lang.AmfFileType" fieldName="INSTANCE" extensions="amf"/>
+
+        <fileType name="heckit.MTL" language="heckit.MTL" implementationClass="app.heckit.ide.scadsphere.lang.MtlFileType"
+                  fieldName="INSTANCE" extensions="mtl"/>
+        <lang.parserDefinition language="heckit.MTL" implementationClass="app.heckit.ide.scadsphere.lang.MtlParserDefinition"/>
+        <lang.syntaxHighlighterFactory language="heckit.MTL" implementationClass="app.heckit.ide.scadsphere.lang.MtlSyntaxHighlighterFactory"/>
+        <lang.commenter language="heckit.MTL" implementationClass="app.heckit.ide.scadsphere.lang.MtlCommenter"/>
+        <lang.foldingBuilder language="heckit.MTL" implementationClass="app.heckit.ide.scadsphere.lang.MtlFoldingBuilder"/>
+        <colorProvider implementation="app.heckit.ide.scadsphere.lang.MtlColorProvider"/>
 
         <lang.parserDefinition language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadParserDefinition"/>
         <lang.syntaxHighlighterFactory language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadSyntaxHighlighterFactory"/>
