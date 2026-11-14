@@ -12,7 +12,9 @@ import app.heckit.ide.scadsphere.customizer.ScadCustomizer
 import app.heckit.ide.scadsphere.customizer.ToggleCustomizerAction
 import app.heckit.ide.scadsphere.export.ExportFormat
 import app.heckit.ide.scadsphere.lang.ScadFileType
+import app.heckit.ide.scadsphere.lang.ScadTypes
 import app.heckit.ide.scadsphere.psi.ScadFile
+import app.heckit.ide.scadsphere.psi.ScadModuleCall
 import app.heckit.ide.scadsphere.customizer.formatNumber
 import app.heckit.ide.scadsphere.render.CsgOverlay
 import app.heckit.ide.scadsphere.render.OpenScad
@@ -28,6 +30,8 @@ import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.editor.event.CaretEvent
+import com.intellij.openapi.editor.event.CaretListener
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -51,6 +55,7 @@ import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.psi.PsiManager
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
@@ -95,6 +100,17 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     private var playing = false
     private val frames = HashMap<Int, RenderResult>()
     private val playAlarm = Alarm(this)
+
+    /** Aufruf an der Schreibmarke des Editors daneben: wird getrennt gerechnet und über dem Modell gezeigt. */
+    private var caretOffset = -1
+    private val caretAlarm = Alarm(this)
+    @Volatile
+    private var caretRender: OpenScadRender? = null
+    /** Wofür das Overlay gerechnet wurde (Stand des Texts, Stelle des Aufrufs, Werte) */
+    private var caretKey: Any? = null
+    private var caretShown = false
+    /** Änderungsstand des Texts, aus dem das gezeigte Modell stammt */
+    private var shownStamp: Long? = null
 
     val isRendering: Boolean get() = current != null
 
@@ -211,7 +227,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         val stamp = document?.modificationStamp
         val source = File(file.path)
         val step = frame.takeIf { animated }
-        val defines = ScadCustomizer.defines(project, file) + listOfNotNull(step?.let { "${'$'}t=${formatNumber(it.toDouble() / steps)}" })
+        val defines = defines()
         viewer.setStatus(ScadSphereBundle.message("preview.rendering"))
         updateTools()
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -233,6 +249,65 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         }
     }
 
+    /** Werte für `-D`: Customizer und bei einer Animation der aktuelle Schritt als `$t`. */
+    private fun defines(): List<String> =
+        ScadCustomizer.defines(project, file) + listOfNotNull(frame.takeIf { animated }?.let { "${'$'}t=${formatNumber(it.toDouble() / steps)}" })
+
+    /** Die Schreibmarke im Editor steht jetzt an [offset]. */
+    fun caretMoved(offset: Int) {
+        caretOffset = offset
+        scheduleCaret()
+    }
+
+    private fun scheduleCaret() {
+        caretAlarm.cancelAllRequests()
+        if (!ScadSphereSettings.caretHighlight) return clearCaret()
+        caretAlarm.addRequest(::updateCaret, CARET_DELAY)
+    }
+
+    private fun clearCaret() {
+        caretRender?.cancel()
+        caretRender = null
+        caretKey = null
+        if (caretShown) viewer.setCaretOverlay(null)
+        caretShown = false
+    }
+
+    /** Aufruf an der Schreibmarke suchen - nur, wenn das gezeigte Modell zum Text passt. */
+    private fun updateCaret() {
+        val offset = caretOffset
+        if (document == null || offset < 0 || !viewer.component.isShowing || !hasModel || isRendering || document.modificationStamp != shownStamp) return clearCaret()
+        ReadAction.nonBlocking<Int?> { (PsiManager.getInstance(project).findFile(file) as? ScadFile)?.let { caretCallStart(it, offset) } }
+            .withDocumentsCommitted(project)
+            .expireWith(this)
+            .finishOnUiThread(ModalityState.nonModal()) { start -> showCaret(start) }
+            .submit(AppExecutorUtil.getAppExecutorService())
+    }
+
+    /** Aufruf ab [start] getrennt rechnen (CSG-Baum, dann nur dieses Teil) und über dem Modell zeigen. */
+    private fun showCaret(start: Int?) {
+        val exe = OpenScad.executable()
+        if (document == null || start == null || exe == null || isRendering || document.modificationStamp != shownStamp || start > document.textLength) return clearCaret()
+        val defines = defines()
+        val key = Triple(shownStamp, start, defines)
+        if (key == caretKey) return
+        caretRender?.cancel()
+        caretKey = key
+        val render = OpenScadRender(exe)
+        caretRender = render
+        val marked = CsgOverlay.markCall(document.text, start)
+        val source = File(file.path)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val bytes = runCatching { render.caretOverlay(source, marked, defines) }.getOrNull()
+            ApplicationManager.getApplication().invokeLater({
+                if (caretRender !== render) return@invokeLater
+                caretRender = null
+                if (bytes != null || caretShown) viewer.setCaretOverlay(bytes)
+                caretShown = bytes != null
+            }, { disposed })
+        }
+    }
+
     fun expandMessages() = viewer.expandMessages()
 
     /** Aufruf an den Viewer (Screenshot-Helfer). */
@@ -249,6 +324,14 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
 
     private fun show(result: RenderResult, stamp: Long?) {
         if (result.cancelled) return
+        if (stamp != null) shownStamp = stamp
+        // Ein neues Modell nimmt die Hervorhebung im Viewer mit weg - für den neuen Stand neu suchen
+        caretRender?.cancel()
+        caretRender = null
+        caretKey = null
+        if (caretShown) viewer.setCaretOverlay(null)
+        caretShown = false
+        scheduleCaret()
         dependencies = result.dependencies
         viewer.setMessages(result.messages)
         RenderMessages.getInstance(project).update(this, file, result.messages, stamp)
@@ -352,6 +435,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
     override fun dispose() {
         disposed = true
         current?.cancel()
+        caretRender?.cancel()
         RenderMessages.getInstance(project).clear(this, file)
     }
 
@@ -360,7 +444,27 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         const val CUSTOMIZER_DELAY = 300
         const val DEFAULT_STEPS = 24
         const val FRAME_MS = 100
+        const val CARET_DELAY = 350
     }
+}
+
+/**
+ * Anfang des Modulaufrufs, in dessen Kopf (Modifikator, Name, Argumente) [offset] liegt - nicht in seinen Kindern,
+ * sonst wäre in einem Block immer alles hervorgehoben. `echo`, `assert`, `let` und `each` erzeugen nichts, mit `*` und
+ * `!` markierte Aufrufe ändern, was gerechnet wird.
+ */
+internal fun caretCallStart(file: ScadFile, offset: Int): Int? {
+    for (at in listOf(offset, offset - 1)) {
+        if (at < 0) continue
+        val call = PsiTreeUtil.getParentOfType(file.findElementAt(at), ScadModuleCall::class.java, false) ?: continue
+        val name = call.nameElement ?: continue
+        val type = name.node.elementType
+        if (type != ScadTypes.IDENTIFIER && type != ScadTypes.FOR) continue
+        if (call.node.findChildByType(ScadTypes.MUL) != null || call.node.findChildByType(ScadTypes.NOT) != null) continue
+        val headEnd = (call.argumentList ?: name).textRange.endOffset
+        if (offset in call.textRange.startOffset..headEnd) return call.textRange.startOffset
+    }
+    return null
 }
 
 /** Editor und Vorschau nebeneinander (umschaltbar oben rechts, wie bei Markdown). */
@@ -368,6 +472,15 @@ class ScadSplitEditor(editor: TextEditor, val preview: ScadPreviewEditor) : Text
     editor, preview, "OpenSCAD",
     if (ScadSphereSettings.showPreview) Layout.SHOW_EDITOR_AND_PREVIEW else Layout.SHOW_EDITOR,
 ) {
+    init {
+        // Die Vorschau hebt den Aufruf an der Schreibmarke hervor
+        val caretModel = editor.editor.caretModel
+        preview.caretMoved(caretModel.offset)
+        caretModel.addCaretListener(object : CaretListener {
+            override fun caretPositionChanged(event: CaretEvent) = preview.caretMoved(event.editor.caretModel.offset)
+        }, preview)
+    }
+
     override fun createLeftToolbarActionGroup(): ActionGroup {
         val actions = ActionManager.getInstance()
         // Neu rechnen und Customizer stehen in der Leiste des Viewers rechts oben

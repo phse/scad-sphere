@@ -1,0 +1,10 @@
+<html>
+<body>
+Reports modules and argument names from old OpenSCAD versions. Depending on the installed version OpenSCAD reports
+them as <code>DEPRECATED</code> when rendering or no longer knows them at all: <code>assign()</code>, <code>child()</code>, <code>import_stl()</code>, <code>import_off()</code>,
+<code>import_dxf()</code>, <code>dxf_linear_extrude()</code>, <code>dxf_rotate_extrude()</code>,
+<code>import(filename = …)</code>, <code>polyhedron(triangles = …)</code> and <code>file</code>/<code>layer</code> of
+<code>linear_extrude()</code> and <code>rotate_extrude()</code>.
+<p>The quick fix replaces the name where there is a direct replacement. A module of your own with one of these names is not reported.</p>
+</body>
+</html>

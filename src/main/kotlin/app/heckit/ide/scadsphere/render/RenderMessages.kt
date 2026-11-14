@@ -3,6 +3,7 @@ package app.heckit.ide.scadsphere.render
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.RangeMarker
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
@@ -33,7 +34,7 @@ class RenderMessages(private val project: Project) {
     fun update(owner: Any, source: VirtualFile, messages: List<RenderMessage>, stamp: Long?) {
         val sourcePath = canonical(source.path)
         val marked = messages.asSequence()
-            .filter { it.level == RenderMessage.Level.ERROR || it.level == RenderMessage.Level.WARNING }
+            .filter { it.level == RenderMessage.Level.ERROR || it.level == RenderMessage.Level.WARNING || it.level == RenderMessage.Level.ECHO }
             .filter { it.file != null && it.line != null }
             .groupBy { canonical(it.file!!) }
             .mapNotNull { (path, list) ->
@@ -44,21 +45,37 @@ class RenderMessages(private val project: Project) {
             }
             .toMap()
         val old = byOwner.put(owner, marked)
+        echoCache.clear()
         refresh(source, old.orEmpty().keys + marked.keys)
         old?.values?.flatten()?.forEach { it.marker.dispose() }
     }
 
     fun clear(owner: Any, source: VirtualFile) {
         val old = byOwner.remove(owner) ?: return
+        echoCache.clear()
         refresh(source, old.keys)
         old.values.flatten().forEach { it.marker.dispose() }
     }
 
-    /** Gültige Meldungen zu [path] aus allen Vorschauen (zwei Vorschauen derselben Datei nur einmal) */
+    /** Gültige Fehler und Warnungen zu [path] aus allen Vorschauen (zwei Vorschauen derselben Datei nur einmal) */
     fun forFile(path: String): List<Marked> {
         val key = canonical(path)
-        return byOwner.values.flatMap { it[key].orEmpty() }.filter { it.marker.isValid }
+        return byOwner.values.flatMap { it[key].orEmpty() }.filter { it.marker.isValid && it.message.level != RenderMessage.Level.ECHO }
             .distinctBy { Triple(it.message.level, it.message.text, it.marker.startOffset) }
+    }
+
+    /** Ausgaben von `echo` an einer Stelle der Datei, in der Reihenfolge des Laufs (eine Schleife gibt mehrere). */
+    class Echo(val marker: RangeMarker, val values: List<String>)
+
+    /** Pfad wie von der IDE → `echo`-Ausgaben; je Pfad gemerkt, weil der Editor beim Zeichnen jede Zeile fragt. */
+    private val echoCache = ConcurrentHashMap<String, List<Echo>>()
+
+    /** `echo`-Ausgaben des letzten Laufs für die Datei [path], je Stelle zusammengefasst. */
+    fun echoes(path: String): List<Echo> = echoCache.computeIfAbsent(path) {
+        val key = canonical(path)
+        // Bei zwei Vorschauen derselben Datei reicht eine
+        val list = byOwner.values.firstNotNullOfOrNull { messages -> messages[key]?.filter { it.message.level == RenderMessage.Level.ECHO }?.takeIf { it.isNotEmpty() } }
+        list.orEmpty().groupBy { it.message.line }.values.map { group -> Echo(group.first().marker, group.map { it.message.text }) }
     }
 
     private fun mark(document: Document, message: RenderMessage): Marked? {
@@ -84,6 +101,10 @@ class RenderMessages(private val project: Project) {
         for (path in paths.toSet()) {
             val file = (if (path == sourcePath) source else LocalFileSystem.getInstance().findFileByPath(path)) ?: continue
             PsiManager.getInstance(project).findFile(file)?.let { analyzer.restart(it, "SCAD Sphere: OpenSCAD messages") }
+            // echo-Werte am Zeilenende zeichnet der Editor selbst ([ScadEchoLinePainter]) - neu zeichnen lassen
+            FileDocumentManager.getInstance().getCachedDocument(file)?.let { document ->
+                EditorFactory.getInstance().getEditors(document, project).forEach { it.contentComponent.repaint() }
+            }
         }
     }
 

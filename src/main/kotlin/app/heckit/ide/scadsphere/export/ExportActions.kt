@@ -3,6 +3,7 @@ package app.heckit.ide.scadsphere.export
 import app.heckit.ide.scadsphere.ScadFileStates
 import app.heckit.ide.scadsphere.ScadSphereConfigurable
 import app.heckit.ide.scadsphere.ScadSphereBundle
+import app.heckit.ide.scadsphere.customizer.ParameterSets
 import app.heckit.ide.scadsphere.customizer.ScadCustomizer
 import app.heckit.ide.scadsphere.editor.NOTIFICATIONS
 import app.heckit.ide.scadsphere.editor.notFound
@@ -103,11 +104,14 @@ class ExportFormatAction(private val format: ExportFormat) : DumbAwareAction() {
         val note = if (defines.isEmpty()) null else states.parameterSet(file)
             ?.let { ScadSphereBundle.message("export.dialog.customizerSet", defines.size, it) }
             ?: ScadSphereBundle.message("export.dialog.customizer", defines.size)
-        val dialog = ExportDialog(project, format, ScadSphereBundle.message("export.dialog.title", format.label), ScadSphereBundle.message("export.dialog.ok"), defaultTarget, emptyList(), format.choices(features), note)
+        val sets = ParameterSets.read(file).keys.toList()
+        val dialog = ExportDialog(project, format, ScadSphereBundle.message("export.dialog.title", format.label), ScadSphereBundle.message("export.dialog.ok"), defaultTarget, emptyList(), format.choices(features), note,
+            sets, states.exportAllSets(file))
         if (!dialog.showAndGet()) return
         val target = dialog.target() ?: return
-        states.setExportTarget(file, target.path)
-        export(project, exe, file, target, dialog.options())
+        states.setExportTarget(file, target.path, dialog.allSets())
+        if (dialog.allSets()) exportSets(project, exe, file, target, dialog.options(), sets)
+        else export(project, exe, file, target, dialog.options())
     }
 }
 
@@ -131,7 +135,9 @@ class ExportAgainAction : DumbAwareAction(ScadSphereBundle.messagePointer("actio
         val format = ExportFormat.byExtension(target.extension) ?: return
         val exe = OpenScad.executable() ?: return notFound(project)
         val features = features(project, exe) ?: return
-        export(project, exe, file, target, format.rememberedOptions(features))
+        val sets = if (ScadFileStates.of(project).exportAllSets(file)) ParameterSets.read(file).keys.toList() else emptyList()
+        if (sets.isNotEmpty()) exportSets(project, exe, file, target, format.rememberedOptions(features), sets)
+        else export(project, exe, file, target, format.rememberedOptions(features))
     }
 }
 
@@ -238,6 +244,44 @@ private fun export(project: Project, exe: String, file: VirtualFile, target: Fil
             val result = result ?: return
             if (!result.ok) return failed(project, target, result.messages)
             done(project, ScadSphereBundle.message("export.done", target.name), listOf(target))
+        }
+    }.queue()
+}
+
+/** Ziel für den Parametersatz [set] neben [target]: `<name>-<satz>.<endung>`, Zeichen für Pfade ersetzt. */
+internal fun setTarget(target: File, set: String): File {
+    val safe = set.trim().replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), "_").ifEmpty { "_" }
+    return File(target.parentFile, "${target.nameWithoutExtension}-$safe.${target.extension}")
+}
+
+/**
+ * Alle Parametersätze der Datei exportieren, je Satz eine Datei ([setTarget]). OpenSCAD liest die Sätze selbst
+ * (`-p`/`-P`), wie seine Oberfläche; die gerade im Customizer geänderten Werte zählen dabei nicht.
+ */
+private fun exportSets(project: Project, exe: String, file: VirtualFile, target: File, options: ExportOptions, sets: List<String>) {
+    FileDocumentManager.getInstance().getDocument(file)?.let { FileDocumentManager.getInstance().saveDocument(it) }
+    val json = ParameterSets.find(file)?.let { File(it.path) } ?: return
+    FileDocumentManager.getInstance().getCachedDocument(ParameterSets.find(file)!!)?.let { FileDocumentManager.getInstance().saveDocument(it) }
+    object : Task.Backgroundable(project, ScadSphereBundle.message("export.progressSets", sets.size), true) {
+        private val exported = mutableListOf<File>()
+        private val failures = mutableListOf<Pair<File, List<RenderMessage>>>()
+
+        override fun run(indicator: ProgressIndicator) {
+            indicator.isIndeterminate = false
+            sets.forEachIndexed { index, set ->
+                indicator.checkCanceled()
+                val setFile = setTarget(target, set)
+                indicator.text2 = setFile.name
+                indicator.fraction = index.toDouble() / sets.size
+                val result = OpenScadRender(exe).export(File(file.path), setFile, options, emptyList(), indicator, json to set)
+                if (result.ok) exported += setFile else failures += setFile to result.messages
+            }
+        }
+
+        override fun onSuccess() {
+            failures.forEach { (setFile, messages) -> failed(project, setFile, messages) }
+            if (exported.isEmpty()) return
+            done(project, ScadSphereBundle.message("export.doneSets", exported.size, target.parentFile.name), exported)
         }
     }.queue()
 }

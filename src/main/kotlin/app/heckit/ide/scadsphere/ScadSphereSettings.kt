@@ -51,6 +51,16 @@ object ScadSphereSettings {
         get() = PropertiesComponent.getInstance().getBoolean(SHOW_CUSTOMIZER_KEY, true)
         set(value) = PropertiesComponent.getInstance().setValue(SHOW_CUSTOMIZER_KEY, value, true)
 
+    /** Den Aufruf an der Schreibmarke in der Vorschau hervorheben. */
+    var caretHighlight: Boolean
+        get() = PropertiesComponent.getInstance().getBoolean(CARET_HIGHLIGHT_KEY, true)
+        set(value) = PropertiesComponent.getInstance().setValue(CARET_HIGHLIGHT_KEY, value, true)
+
+    /** Ausgaben von `echo` am Ende ihrer Zeile im Editor zeigen. */
+    var echoInline: Boolean
+        get() = PropertiesComponent.getInstance().getBoolean(ECHO_INLINE_KEY, true)
+        set(value) = PropertiesComponent.getInstance().setValue(ECHO_INLINE_KEY, value, true)
+
     /** Druckbett im Viewer zeigen und prüfen, ob das Modell darauf passt. */
     var bedEnabled: Boolean
         get() = PropertiesComponent.getInstance().getBoolean(BED_ENABLED_KEY, true)
@@ -87,6 +97,8 @@ object ScadSphereSettings {
     private const val BACKEND_KEY = "app.heckit.ide.scadsphere.backend"
     private const val RENDER_DELAY_KEY = "app.heckit.ide.scadsphere.renderDelay"
     private const val SHOW_PREVIEW_KEY = "app.heckit.ide.scadsphere.showPreview"
+    private const val CARET_HIGHLIGHT_KEY = "app.heckit.ide.scadsphere.caretHighlight"
+    private const val ECHO_INLINE_KEY = "app.heckit.ide.scadsphere.echoInline"
     private const val SHOW_CUSTOMIZER_KEY = "app.heckit.ide.scadsphere.showCustomizer"
 }
 

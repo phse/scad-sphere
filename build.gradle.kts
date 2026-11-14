@@ -17,6 +17,11 @@ version = providers.gradleProperty("pluginVersion").get()
 
 kotlin {
     jvmToolchain(25)
+    // Ohne das erzeugt Kotlin Brücken auf Default-Methoden von Plattform-Interfaces (McpToolset), die es in
+    // älteren IDEs nicht gibt bzw. die der Verifier als veraltete API meldet
+    compilerOptions {
+        jvmDefault.set(org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode.NO_COMPATIBILITY)
+    }
 }
 
 // ./gradlew runIde -Pscreenshots=<ordner> baut den Screenshot-Helfer mit ein (nie für Releases verwenden).
@@ -77,6 +82,8 @@ dependencies {
         }
         // Eingebetteter Browser (seit 2026.x ein eigenes, mitgeliefertes Plugin).
         bundledPlugin("com.intellij.modules.jcef")
+        // MCP-Server der IDE: optional, für die Werkzeuge scad_render, scad_parameters und scad_export
+        bundledPlugin("com.intellij.mcpServer")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
     }
 }
@@ -89,6 +96,21 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.5.0</h3>
+            <ul>
+              <li>The call at the caret is highlighted in the preview, also parts subtracted in a <code>difference()</code>;
+                  the file is not changed.</li>
+              <li><code>echo</code> output appears at the end of its line in the editor, like values in a debugger; the
+                  messages below the model jump to the line.</li>
+              <li>New inspection: deprecated or removed modules and arguments (<code>assign</code>, <code>child</code>,
+                  <code>import_stl</code>, <code>filename</code>, <code>triangles</code>, ...) with a quick fix.</li>
+              <li>Export all parameter sets at once, one file per set; Export Again repeats it.</li>
+              <li>Missing libraries (BOSL2, BOSL, NopSCADlib, MCAD, Round-Anything, threads-scad, smooth-prim, scad-utils,
+                  YAPP_Box): quick fix on the <code>include</code>/<code>use</code> downloads them from GitHub into the library folder.</li>
+              <li>Measure angles (three points) and diameters (three points on a circle, e.g. the edge of a hole) besides distances.</li>
+              <li>MCP tools for AI assistants (<code>scad_render</code>, <code>scad_parameters</code>, <code>scad_export</code>):
+                  an assistant connected to the IDE's MCP server can render a model and gets messages, size, volume and images back.</li>
+            </ul>
             <h3>1.4.0</h3>
             <ul>
               <li>Mesh editing: parts list grouped by material or color with show/hide and a filter; rename and delete parts,

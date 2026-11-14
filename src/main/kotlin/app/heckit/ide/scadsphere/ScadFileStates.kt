@@ -27,6 +27,9 @@ class ScadFileStates : PersistentStateComponent<ScadFileStates.FilesState> {
         var parameterSet: String? = null
         var exportTarget: String? = null
 
+        /** Zuletzt alle Parametersätze exportiert (je Satz eine Datei neben [exportTarget]) */
+        var exportAllSets: Boolean = false
+
         fun isEmpty() = overrides.isEmpty() && parameterSet == null && exportTarget == null
     }
 
@@ -64,7 +67,12 @@ class ScadFileStates : PersistentStateComponent<ScadFileStates.FilesState> {
 
     fun exportTarget(file: VirtualFile): String? = entry(file)?.exportTarget
 
-    fun setExportTarget(file: VirtualFile, target: String) = update(file, null) { it.exportTarget = target }
+    fun exportAllSets(file: VirtualFile): Boolean = entry(file)?.exportAllSets == true
+
+    fun setExportTarget(file: VirtualFile, target: String, allSets: Boolean = false) = update(file, null) {
+        it.exportTarget = target
+        it.exportAllSets = allSets
+    }
 
     /** Meldet Änderungen (Pfad der Datei, Auslöser) z. B. an eine zweite Vorschau derselben Datei. */
     fun addListener(parent: Disposable, listener: (path: String, source: Any?) -> Unit) {

@@ -232,3 +232,80 @@ internal fun ScadResolver.isLocalDeclaration(element: PsiElement): Boolean = whe
     is ScadAssignment -> element.parent?.node?.elementType == ScadTypes.BLOCK
     else -> false
 }
+
+/**
+ * Was OpenSCAD beim Rechnen als `DEPRECATED` meldet oder in neuen Versionen gar nicht mehr kennt (2026.04: `assign`,
+ * `import_stl`, `dxf_linear_extrude` sind „unknown module“), schon beim Tippen: alte Module und alte Namen von
+ * Argumenten (`filename`, `triangles`). Ein eigenes Modul gleichen Namens zählt nicht.
+ */
+object ScadDeprecated {
+    /** Modul → Ersatz (null: kein einfacher Ersatz, die Meldung erklärt den Weg) */
+    val MODULES: Map<String, String?> = mapOf(
+        "assign" to "let",
+        "child" to "children",
+        "import_stl" to "import",
+        "import_off" to "import",
+        "import_dxf" to "import",
+        "dxf_linear_extrude" to null,
+        "dxf_rotate_extrude" to null,
+    )
+
+    /** Modul → (Argument → Ersatz bzw. null) */
+    val ARGUMENTS: Map<String, Map<String, String?>> = mapOf(
+        "import" to mapOf("filename" to "file"),
+        "polyhedron" to mapOf("triangles" to "faces"),
+        "linear_extrude" to mapOf("file" to null, "layer" to null),
+        "rotate_extrude" to mapOf("file" to null, "layer" to null),
+    )
+}
+
+class ScadDeprecatedInspection : LocalInspectionTool() {
+    override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor = object : PsiElementVisitor() {
+        override fun visitElement(element: PsiElement) {
+            if (element !is ScadModuleCall) return
+            val name = element.nameElement?.takeIf { it.node.elementType == ScadTypes.IDENTIFIER } ?: return
+            val module = name.text
+            if (module !in ScadDeprecated.MODULES && module !in ScadDeprecated.ARGUMENTS) return
+            if ((element.reference as? ScadReference)?.multiResolve(false).orEmpty().isNotEmpty()) return
+            if (module in ScadDeprecated.MODULES) {
+                val replacement = ScadDeprecated.MODULES[module]
+                val message = when {
+                    replacement != null -> ScadSphereBundle.message("inspection.deprecated.module", module, replacement)
+                    else -> ScadSphereBundle.message("inspection.deprecated.extrude", module, module.removePrefix("dxf_"))
+                }
+                if (replacement == null) holder.registerProblem(name, message, ProblemHighlightType.LIKE_DEPRECATED)
+                else holder.registerProblem(name, message, ProblemHighlightType.LIKE_DEPRECATED, RenameDeprecatedFix(replacement))
+            }
+            val arguments = ScadDeprecated.ARGUMENTS[module] ?: return
+            for (argument in element.arguments) {
+                val argumentName = argument.argumentName ?: continue
+                if (argumentName.text !in arguments) continue
+                val replacement = arguments[argumentName.text]
+                if (replacement == null) {
+                    holder.registerProblem(argumentName, ScadSphereBundle.message("inspection.deprecated.extrudeFile", module, argumentName.text), ProblemHighlightType.LIKE_DEPRECATED)
+                } else {
+                    holder.registerProblem(argumentName, ScadSphereBundle.message("inspection.deprecated.argument", argumentName.text, replacement),
+                        ProblemHighlightType.LIKE_DEPRECATED, RenameDeprecatedFix(replacement))
+                }
+            }
+        }
+    }
+}
+
+/** Alten Namen (Modul oder Argument) durch [replacement] ersetzen; `child()` ohne Argument meinte das erste Kind. */
+class RenameDeprecatedFix(private val replacement: String) : LocalQuickFix {
+    override fun getFamilyName(): String = ScadSphereBundle.message("fix.replaceDeprecated", replacement)
+
+    override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
+        val name = descriptor.psiElement ?: return
+        val call = name.parent as? ScadModuleCall
+        val document = PsiDocumentManager.getInstance(project).getDocument(name.containingFile) ?: return
+        PsiDocumentManager.getInstance(project).doPostponedOperationsAndUnblockDocument(document)
+        val childWithoutIndex = call != null && call.nameElement == name && name.text == "child" && call.arguments.isEmpty()
+        val open = call?.argumentList?.textRange?.startOffset
+        // Von hinten nach vorn, damit die Stellen gültig bleiben
+        if (childWithoutIndex && open != null && document.charsSequence[open] == '(') document.insertString(open + 1, "0")
+        document.replaceString(name.textRange.startOffset, name.textRange.endOffset, replacement)
+        PsiDocumentManager.getInstance(project).commitDocument(document)
+    }
+}

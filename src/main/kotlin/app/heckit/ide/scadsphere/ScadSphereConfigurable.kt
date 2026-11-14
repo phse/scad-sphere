@@ -79,6 +79,14 @@ class ScadSphereConfigurable : BoundConfigurable(ScadSphereBundle.message("setti
                 spinner(200..10000, 100).bindIntValue(ScadSphereSettings::renderDelay)
                 label(ScadSphereBundle.message("settings.renderDelay.unit"))
             }.enabledIf(mode.component.selectedValueIs(ScadSphereSettings.RenderMode.TYPING))
+            row {
+                checkBox(ScadSphereBundle.message("settings.caretHighlight")).bindSelected(ScadSphereSettings::caretHighlight)
+                    .comment(ScadSphereBundle.message("settings.caretHighlight.comment"))
+            }
+            row {
+                checkBox(ScadSphereBundle.message("settings.echoInline")).bindSelected(ScadSphereSettings::echoInline)
+                    .comment(ScadSphereBundle.message("settings.echoInline.comment"))
+            }
         }
         group(ScadSphereBundle.message("settings.slicer")) {
             val slicers = Slicer.detect()

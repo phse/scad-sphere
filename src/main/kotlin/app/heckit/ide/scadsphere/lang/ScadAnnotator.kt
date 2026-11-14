@@ -6,6 +6,7 @@ import app.heckit.ide.scadsphere.psi.ScadCallExpression
 import app.heckit.ide.scadsphere.psi.ScadFile
 import app.heckit.ide.scadsphere.psi.ScadImportStatement
 import app.heckit.ide.scadsphere.psi.ScadImports
+import app.heckit.ide.scadsphere.psi.ScadLibraryCatalog
 import app.heckit.ide.scadsphere.psi.ScadCallableDeclaration
 import app.heckit.ide.scadsphere.psi.ScadFunctionDeclaration
 import app.heckit.ide.scadsphere.psi.ScadModuleCall
@@ -47,7 +48,7 @@ class ScadAnnotator : Annotator {
         val resolved = (call.reference as? ScadReference)?.multiResolve(false).orEmpty().isNotEmpty()
         val key = when {
             resolved -> ScadColors.MODULE_CALL
-            ScadBuiltins.module(name.text) != null -> ScadColors.BUILTIN_MODULE
+            ScadBuiltins.module(name.text) != null || name.text in ScadDeprecated.MODULES -> ScadColors.BUILTIN_MODULE
             else -> ScadColors.MODULE_CALL
         }
         holder.color(name, key)
@@ -61,9 +62,11 @@ class ScadAnnotator : Annotator {
         val path = statement.path ?: return
         val range = statement.pathRange ?: return
         if (path.isBlank() || ScadImports.importedFile(statement) != null) return
-        holder.newAnnotation(HighlightSeverity.WARNING, ScadSphereBundle.message("annotation.fileNotFound", path))
+        var annotation = holder.newAnnotation(HighlightSeverity.WARNING, ScadSphereBundle.message("annotation.fileNotFound", path))
             .range(range.shiftRight(statement.textRange.startOffset))
-            .create()
+        // Bekannte Bibliothek (BOSL2, NopSCADlib, …), die noch nicht installiert ist
+        ScadLibraryCatalog.forPath(path)?.let { annotation = annotation.withFix(InstallLibraryFix(it)) }
+        annotation.create()
     }
 
     private fun annotateReference(reference: ScadReferenceExpression, holder: AnnotationHolder) {

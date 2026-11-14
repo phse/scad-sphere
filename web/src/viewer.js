@@ -87,6 +87,10 @@ let hasModel = false
 let modelHasColors = false
 let loadId = 0
 let overlay = null      // Teile mit # (hervorgehoben) und % (Hintergrund), nicht Teil des Modells
+let caretOverlay = null // Aufruf an der Schreibmarke im Editor, ebenfalls nicht Teil des Modells
+let caretId = 0
+let caretUrl = null     // zuletzt verlangte Hervorhebung: kommt sie, während ein Modell noch lädt, wird sie danach neu gesetzt
+const CARET_COLOR = '#3d8bff'
 
 // --- Zeichnen bei Bedarf (kein Dauer-Loop, die IDE soll ruhig bleiben) ---
 
@@ -183,22 +187,69 @@ async function load({ url, format, keepCamera, overlayUrl, mtl, resourceBase, fi
     applySection()
     requestRender()
   }
+  if (caretUrl) setCaret(caretUrl)
+}
+
+/**
+ * Aufruf an der Schreibmarke im Editor: Das Plugin rechnet ihn getrennt, hier liegt er durchsichtig über dem Modell
+ * (auch abgezogene Teile einer difference()). Ohne Adresse verschwindet er.
+ */
+async function setCaret(url) {
+  caretUrl = url
+  const id = ++caretId
+  let object = null
+  if (url && model) {
+    try {
+      const response = await fetch(url, { cache: 'no-store' })
+      if (response.ok) object = styleOverlay(new ThreeMFLoader().parse(await response.arrayBuffer()), true)
+    } catch {
+      // ohne Hervorhebung weiter
+    }
+    if (id !== caretId) return
+  }
+  removeCaret()
+  if (object && model) {
+    caretOverlay = upWrap(object)
+    orient(caretOverlay)
+    scene.add(caretOverlay)
+    applySection()
+  }
+  requestRender()
+}
+
+function removeCaret() {
+  if (!caretOverlay) return
+  scene.remove(caretOverlay)
+  disposeOverlay(caretOverlay)
+  caretOverlay = null
+}
+
+function disposeOverlay(object) {
+  object.traverse((child) => {
+    child.geometry?.dispose()
+    const materials = Array.isArray(child.material) ? child.material : child.material ? [child.material] : []
+    for (const material of materials) material.dispose()
+  })
 }
 
 /**
  * # und %-Teile (das Plugin rechnet sie getrennt und färbt # rot, % grau): durchsichtig wie in OpenSCAD.
- * Sie zählen nicht zur Größe, zum Druckbett oder zum Messen.
+ * Sie zählen nicht zur Größe, zum Druckbett oder zum Messen. [caret]: der Aufruf an der Schreibmarke, in Blau.
  */
-function styleOverlay(group) {
+function styleOverlay(group, caret = false) {
   group.traverse((child) => {
     if (!child.isMesh) return
     const materials = Array.isArray(child.material) ? child.material : [child.material]
     child.material = materials.map((material) => {
       const highlight = material.color.r > material.color.g + 0.2
       const style = new MeshPhongMaterial({
-        color: highlight ? '#ff5a78' : '#9a9a9a',
+        color: caret ? CARET_COLOR : highlight ? '#ff5a78' : '#9a9a9a',
         transparent: true,
-        opacity: highlight ? 0.45 : 0.22,
+        opacity: caret ? 0.6 : highlight ? 0.45 : 0.22,
+        // Der Aufruf liegt oft deckungsgleich auf dem Modell: nach vorn ziehen, sonst flimmern die Flächen
+        polygonOffset: caret,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
         depthWrite: false,
         side: DoubleSide,
         flatShading: true,
@@ -208,7 +259,7 @@ function styleOverlay(group) {
       return style
     })
     if (child.material.length === 1) child.material = child.material[0]
-    child.renderOrder = 2
+    child.renderOrder = caret ? 3 : 2
   })
   return group
 }
@@ -448,13 +499,11 @@ function setModel(object, keepCamera) {
 
 function clearModel() {
   removeCaps()
+  caretId++
+  removeCaret()
   if (overlay) {
     scene.remove(overlay)
-    overlay.traverse((child) => {
-      child.geometry?.dispose()
-      const materials = Array.isArray(child.material) ? child.material : child.material ? [child.material] : []
-      for (const material of materials) material.dispose()
-    })
+    disposeOverlay(overlay)
     overlay = null
   }
   if (edges) {
@@ -698,6 +747,8 @@ const icons = {
   upY: '<path d="M8 13.5V3M5.5 5.5 8 3l2.5 2.5"/><path d="M8 13.5 3 11M8 13.5l5-2.5" opacity=".45"/><text x="11.2" y="6.8" font-size="6.5" font-family="sans-serif" font-weight="600" fill="currentColor" stroke="none">Y</text>',
   upX: '<path d="M8 13.5V3M5.5 5.5 8 3l2.5 2.5"/><path d="M8 13.5 3 11M8 13.5l5-2.5" opacity=".45"/><text x="11.2" y="6.8" font-size="6.5" font-family="sans-serif" font-weight="600" fill="currentColor" stroke="none">X</text>',
   measure: '<path d="M2 11.5 11.5 2l2.5 2.5L4.5 14z"/><path d="M5 8.5l1.2 1.2M7 6.5l1.7 1.7M9 4.5l1.2 1.2"/>',
+  measureAngle: '<path d="M13.5 13H2.5L11 3.5"/><path d="M8 13a5.5 5.5 0 0 0-1.6-3.9"/>',
+  measureDiameter: '<circle cx="8" cy="8" r="5"/><path d="M3 13 13 3"/>',
   section: '<path d="M8 1.8 13.5 5v6.2L8 14.3 2.5 11.2V5z" opacity=".45"/><path d="M1 8.5h14" /><path d="M2.5 8.5 8 11.6l5.5-3.1L8 5.4z" fill="currentColor" fill-opacity=".35"/>',
   display: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
   more: '<path d="M4 4.5 7.5 8 4 11.5M8.5 4.5 12 8l-3.5 3.5"/>',
@@ -756,6 +807,7 @@ function setUp(axis) {
   scene.remove(object)
   orient(object)
   if (keepOverlay) orient(keepOverlay)
+  if (caretOverlay) orient(caretOverlay)
   removeCaps()
   if (edges) { scene.remove(edges); edges.traverse((c) => c.geometry?.dispose()); edges = null }
   scene.add(object)
@@ -773,6 +825,13 @@ function setUp(axis) {
   updateToolbar()
   requestRender()
 }
+
+// Messen: Abstand (zwei Punkte), Winkel (drei Punkte, der zweite ist der Scheitel), Durchmesser (drei Punkte auf dem Kreis)
+const measureItems = [
+  { name: 'measureDistance', icon: 'measure', action: () => setMeasureMode('distance'), isOn: () => measure.on && measure.mode === 'distance' },
+  { name: 'measureAngle', action: () => setMeasureMode('angle'), isOn: () => measure.on && measure.mode === 'angle' },
+  { name: 'measureDiameter', action: () => setMeasureMode('diameter'), isOn: () => measure.on && measure.mode === 'diameter' },
+]
 
 const upItems = [
   { name: 'upZ', icon: 'upZ', action: () => setUp('z'), isOn: () => upAxis === 'z' },
@@ -796,7 +855,8 @@ function toolbarEntries() {
     { name: 'up', icon: () => `up${upAxis.toUpperCase()}`, items: upItems, keep: 3.5 },
     'sep',
     // Beim Abspielen kommt alle paar Millisekunden ein neues Modell - Messpunkte hielten nicht
-    { name: 'measure', action: toggleMeasure, isOn: () => measure.on, enabled: () => hasModel && !timeAnimation?.playing,
+    { name: 'measure', icon: () => measure.on ? MEASURE_ICONS[measure.mode] : 'measure', items: measureItems, isOn: () => measure.on,
+      enabled: () => hasModel && !timeAnimation?.playing,
       disabledTip: () => timeAnimation?.playing ? 'tool.measure.playing' : null, keep: 3 },
     ...(palette ? [
       ...(palette.parts !== false ? [{ name: 'parts', action: toggleParts, isOn: () => settings.parts, keep: 5 }] : []),
@@ -1183,20 +1243,71 @@ function toggleBed() {
   updateToolbar()
 }
 
-// --- Messen: zwei Punkte auf dem Modell anklicken (nahe Ecken rasten ein) ---
+// --- Messen: Punkte auf dem Modell anklicken (nahe Ecken rasten ein) ---
+// Abstand: zwei Punkte. Winkel: drei Punkte, der zweite ist der Scheitel. Durchmesser: drei Punkte auf einem Kreis
+// (Rand eines Lochs) - die Ecken eines Vielecks aus $fn liegen genau auf dem Kreis, der Wert stimmt also exakt.
 
-const measure = { on: false, points: [], marker: null }
+const MEASURE_ICONS = { distance: 'measure', angle: 'measureAngle', diameter: 'measureDiameter' }
+const measure = { on: false, mode: 'distance', points: [], marker: null }
+const measureNeeds = () => (measure.mode === 'distance' ? 2 : 3)
 const raycaster = new Raycaster()
 const measureLabel = document.createElement('div')
 measureLabel.className = 'measure-label'
 measureLabel.hidden = true
 document.body.appendChild(measureLabel)
 
+// Solange Punkte fehlen, steht unten, was zu klicken ist und wie viele Punkte schon gesetzt sind
+const measureHint = document.createElement('div')
+measureHint.className = 'measure-hint'
+measureHint.hidden = true
+document.body.appendChild(measureHint)
+
+function updateMeasureHint() {
+  const missing = measure.on && measure.points.length < measureNeeds()
+  measureHint.hidden = !missing
+  if (!missing) return
+  const name = { distance: 'measureDistance', angle: 'measureAngle', diameter: 'measureDiameter' }[measure.mode]
+  const text = `${label(name)} · ${measure.points.length}/${measureNeeds()}`
+  if (measureHint.textContent !== text) measureHint.textContent = text
+}
+
 function toggleMeasure() {
   measure.on = !measure.on
   if (!measure.on) clearMeasure()
+  requestRender()
   renderer.domElement.style.cursor = measure.on ? 'crosshair' : ''
   updateToolbar()
+}
+
+/** Messart wählen; die aktive noch einmal gewählt schaltet das Messen aus. */
+function setMeasureMode(mode) {
+  if (measure.on && measure.mode === mode) return toggleMeasure()
+  measure.mode = mode
+  clearMeasure()
+  if (!measure.on) toggleMeasure()
+  else updateToolbar()
+}
+
+/**
+ * Kreis durch drei Punkte: Mittelpunkt, Radius und Normale der Ebene; null, wenn sie (fast) auf einer Geraden liegen.
+ */
+function circleThrough(a, b, c) {
+  const ab = b.clone().sub(a)
+  const ac = c.clone().sub(a)
+  const normal = ab.clone().cross(ac)
+  const n2 = normal.lengthSq()
+  if (n2 < 1e-12 * ab.lengthSq() * ac.lengthSq() || n2 === 0) return null
+  // Umkreismittelpunkt: a + (|ac|² (ab × ac) × ab + |ab|² ac × (ab × ac)) / (2 |ab × ac|²)
+  const offset = normal.clone().cross(ab).multiplyScalar(ac.lengthSq()).add(ac.clone().cross(normal).multiplyScalar(ab.lengthSq())).divideScalar(2 * n2)
+  return { center: a.clone().add(offset), radius: offset.length(), normal: normal.normalize() }
+}
+
+/** Winkel bei b zwischen den Schenkeln nach a und c, in Grad; null bei einem Schenkel ohne Länge. */
+function angleAt(a, b, c) {
+  const u = a.clone().sub(b)
+  const v = c.clone().sub(b)
+  if (u.lengthSq() === 0 || v.lengthSq() === 0) return null
+  return (u.angleTo(v) * 180) / Math.PI
 }
 
 function clearMeasure() {
@@ -1239,7 +1350,7 @@ function pick(event) {
 }
 
 function addMeasurePoint(point) {
-  if (measure.points.length >= 2) clearMeasure()
+  if (measure.points.length >= measureNeeds()) clearMeasure()
   measure.points.push(point)
   if (measure.marker) {
     scene.remove(measure.marker)
@@ -1253,11 +1364,28 @@ function addMeasurePoint(point) {
     dot.renderOrder = 10
     group.add(dot)
   }
-  if (measure.points.length === 2) {
-    const line = new Line(new BufferGeometry().setFromPoints(measure.points),
-      new LineBasicMaterial({ color: theme.active || '#3574f0', depthTest: false }))
+  const addLine = (points) => {
+    const line = new Line(new BufferGeometry().setFromPoints(points), new LineBasicMaterial({ color: theme.active || '#3574f0', depthTest: false }))
     line.renderOrder = 10
     group.add(line)
+  }
+  if (measure.mode === 'diameter') {
+    const circle = measure.points.length === 3 ? circleThrough(...measure.points) : null
+    if (circle) {
+      // Kreis in seiner Ebene: zwei Achsen senkrecht zur Normalen
+      const u = measure.points[0].clone().sub(circle.center).normalize()
+      const v = circle.normal.clone().cross(u)
+      const ring = []
+      for (let i = 0; i <= 96; i++) {
+        const angle = (i / 96) * Math.PI * 2
+        ring.push(circle.center.clone().addScaledVector(u, Math.cos(angle) * circle.radius).addScaledVector(v, Math.sin(angle) * circle.radius))
+      }
+      addLine(ring)
+      // Durchmesser durch den ersten Punkt
+      addLine([measure.points[0], circle.center.clone().multiplyScalar(2).sub(measure.points[0])])
+    }
+  } else if (measure.points.length >= 2) {
+    addLine(measure.points)
   }
   measure.marker = group
   scene.add(group)
@@ -1265,21 +1393,41 @@ function addMeasurePoint(point) {
 }
 
 function updateMeasureLabel() {
-  if (measure.points.length !== 2) {
+  updateMeasureHint()
+  if (measure.points.length !== measureNeeds()) {
     measureLabel.hidden = true
     return
   }
-  const [a, b] = measure.points
+  const [a, b, c] = measure.points
   const number = (value) => value.toLocaleString(init.locale || undefined, { maximumFractionDigits: 2 })
-  const d = b.clone().sub(a)
+  // Text und Stelle des Schilds je Messart
+  let text
+  let detail
+  let anchor
+  if (measure.mode === 'angle') {
+    const angle = angleAt(a, b, c)
+    text = angle === null ? '–' : `${number(angle)}°`
+    detail = `${number(a.distanceTo(b))} mm · ${number(c.distanceTo(b))} mm`
+    anchor = b.clone()
+  } else if (measure.mode === 'diameter') {
+    const circle = circleThrough(a, b, c)
+    text = circle ? `⌀ ${number(circle.radius * 2)} mm` : '–'
+    detail = circle ? `r ${number(circle.radius)} mm` : labels['measure.collinear'] || ''
+    anchor = circle ? circle.center.clone() : b.clone()
+  } else {
+    const d = b.clone().sub(a)
+    text = `${number(d.length())} mm`
+    detail = `Δx ${number(Math.abs(d.x))} · Δy ${number(Math.abs(d.y))} · Δz ${number(Math.abs(d.z))}`
+    anchor = a.clone().add(b).multiplyScalar(0.5)
+  }
   measureLabel.innerHTML = ''
   const main = document.createElement('div')
-  main.textContent = `${number(d.length())} mm`
+  main.textContent = text
   const parts = document.createElement('div')
   parts.className = 'parts'
-  parts.textContent = `Δx ${number(Math.abs(d.x))} · Δy ${number(Math.abs(d.y))} · Δz ${number(Math.abs(d.z))}`
+  parts.textContent = detail
   measureLabel.append(main, parts)
-  const middle = a.clone().add(b).multiplyScalar(0.5).project(camera)
+  const middle = anchor.project(camera)
   const rect = renderer.domElement.getBoundingClientRect()
   measureLabel.style.left = `${((middle.x + 1) / 2) * rect.width}px`
   measureLabel.style.top = `${((1 - middle.y) / 2) * rect.height}px`
@@ -1436,6 +1584,7 @@ function applySection() {
     material.needsUpdate = true
   })
   forEachMaterial(overlay, (material) => { material.clippingPlanes = planes; material.needsUpdate = true })
+  forEachMaterial(caretOverlay, (material) => { material.clippingPlanes = planes; material.needsUpdate = true })
   edges?.traverse((child) => { if (child.material) { child.material.clippingPlanes = planes; child.material.needsUpdate = true } })
   if (section.on && !caps) buildCaps()
   if (!section.on) removeCaps()
@@ -1635,8 +1784,12 @@ function state() {
     modelHasColors,
     bed: bedProblem(),
     measure: measure.points.map((p) => p.toArray()),
+    measureMode: measure.on ? measure.mode : null,
+    measureHint: measureHint.hidden ? null : measureHint.textContent,
+    measureText: measureLabel.hidden ? null : measureLabel.textContent,
     section: section.on ? { axis: section.axis, value: section.value, flip: section.flip } : null,
     overlay: !!overlay,
+    caret: !!caretOverlay,
     palette: palette ? { open: settings.parts && !partsPanel.hidden, part: selectedPart, transform: transformOpen,
       assigned: assignedKeys() } : null,
   }
@@ -1660,9 +1813,13 @@ function setSection(next) {
 }
 
 /** Für Screenshots und Tests: Messung zwischen zwei Punkten ([x, y, z]) zeigen. */
-function setMeasure(points) {
+/** Messpunkte vorgeben (Screenshots, Tests): Liste von Punkten (Abstand) oder { mode, points }. */
+function setMeasure(value) {
+  const points = Array.isArray(value) ? value : value?.points
+  measure.mode = (!Array.isArray(value) && value?.mode) || 'distance'
   clearMeasure()
   for (const point of points || []) addMeasurePoint(new Vector3(...point))
+  updateToolbar()
   requestRender()
 }
 
@@ -2387,7 +2544,7 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   select(hit?.object.name || null)
 })
 
-window.scadSphere = { load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform }
+window.scadSphere = { setCaret, load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform }
 
 if (init.theme) setTheme(init.theme)
 else scene.background = new Color('#f7f8fa')

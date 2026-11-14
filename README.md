@@ -8,8 +8,8 @@ Plugin ID `app.heckit.ide.scadsphere` · Vendor heck\it ([heckit.app](https://he
 
 A plugin for JetBrains IDEs (PhpStorm, IntelliJ IDEA, … 2026.1 and later) for [OpenSCAD](https://openscad.org):
 language support for `.scad` files, a live 3D preview rendered with the installed OpenSCAD with a Customizer for the
-parameters, export to all formats OpenSCAD writes, and a viewer and converter for `.stl`, `.3mf`, `.obj`, `.off` and
-`.amf` files.
+parameters, export to all formats OpenSCAD writes, a viewer and converter for `.stl`, `.3mf`, `.obj`, `.off` and
+`.amf` files, and MCP tools that let an AI assistant render a model and look at the result.
 
 The language support only ever searches OpenSCAD files. Find Usages in PHP, HTML or any other language is not
 slowed down by it: the plugin registers no global search extensions, its references reject non-OpenSCAD targets
@@ -29,6 +29,10 @@ loop or `let` it lives in).
 - `include <…>`/`use <…>` paths are links (⌘-click), complete like file paths and follow file renames.
   They are looked up next to the file, in the folders from *Settings | Tools | SCAD Sphere*, in `OPENSCADPATH`,
   in the user library folder (`~/Documents/OpenSCAD/libraries` on macOS) and in the libraries of the installation.
+- **Install a library**: a missing `include`/`use` of a known library (BOSL2, BOSL, NopSCADlib, MCAD, Round-Anything,
+  threads-scad, smooth-prim, scad-utils, YAPP_Box) offers the quick fix *Download library … from GitHub*. After a
+  confirmation naming the repository, the license and the target, the ZIP of the main branch is unpacked into the user
+  library folder (no git needed); an existing folder is never overwritten.
 - **Go to Symbol** (⌘⌥O / Ctrl+Alt+Shift+N) finds modules and functions in all `.scad` files of the project (own file-based
   index of the top-level declarations). Library folders outside the project appear under *External Libraries* and are
   found with *Include non-project items*.
@@ -48,11 +52,16 @@ loop or `let` it lives in).
   and move with the text until the next run, also in included files that are open. Unknown modules and functions are
   marked as weak warnings while you type (not while an `include`/`use` file is missing), missing `include`/`use`
   files as warnings.
+- **`echo` at the line**: the output of the last run is shown at the end of the line of its `echo`, like inline values
+  in a debugger (a loop shows the first three values and the number of the rest). For the preview run every `echo(…)`
+  of the file gets its line as a hidden first argument, which is removed from the output again; the file itself and
+  exports are not touched. `echo` in included files only appears below the model.
 - **Inspections** (*Settings | Editor | Inspections | OpenSCAD*): unused parameters and local variables, a variable
   assigned twice in the same scope (OpenSCAD uses the last value everywhere), `use` without any used module or
-  function, calls that leave out a parameter without default value.
+  function, calls that leave out a parameter without default value, deprecated or removed modules and arguments
+  (`assign`, `child`, `import_stl`, `filename =`, `triangles =`, …).
 - **Quick fixes and intentions** (⌥⏎ / Alt+Enter): create an unknown module or function, remove an unused variable or
-  `use`, highlight with `#` or remove it, inline a variable, extract the selected statements into a module (local names
+  `use`, replace a deprecated name, highlight with `#` or remove it, inline a variable, extract the selected statements into a module (local names
   become parameters).
 - Structure view, folding (blocks, comments, long vectors), comment/uncomment, brace matching, TODO comments.
 - Indentation on Enter and **Reformat Code** (indentation only; spacing within lines stays as written).
@@ -73,6 +82,10 @@ loop or `let` it lives in).
 - Parts marked with `#` (highlight) and `%` (background) are shown transparent in red and grey, as in OpenSCAD's own
   preview. OpenSCAD does not export them, so a second run reads the CSG tree (`-o tree.csg`), keeps only these parts
   with the transforms above them and renders them separately; it only starts when the code contains `#` or `%`.
+- **Call at the caret**: with the caret on the name or the arguments of a module call, its geometry is shown in blue
+  over the model - also parts that a `difference()` subtracts, and every instance if the call sits in a module. The
+  file is not changed: the call is wrapped in a marker color for a run that only writes the CSG tree, the marked
+  subtree is rendered separately. Off in the settings.
 - Editor toolbar: **Export with OpenSCAD ▸** and **Open in OpenSCAD** (also in the project tree and the editor tab
   menu). Render again (stop while rendering) and the Customizer button sit at the right end of the viewer toolbar.
 
@@ -97,6 +110,8 @@ loop or `let` it lives in).
   the fitting ones once the preview has rendered). A dialog asks for the file and, where the installed OpenSCAD
   supports them, for options: binary or ASCII STL, colors and unit of a 3MF, paper size and orientation of a PDF. The
   options are detected from `openscad --help` and `--help-export` and the last choice is remembered.
+- **All parameter sets**: if the file has parameter sets, the dialog offers to export all of them, one file per set
+  (`<name>-<set>.<ext>`). OpenSCAD reads the sets itself (`-p <file>.json -P <set>`); *Export Again* repeats it.
 - **Open in Slicer** (editor toolbar, project tree, model viewer): exports a 3MF with colors and the Customizer values
   to a temporary folder and opens it in Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura (the first one found,
   or the one set in the settings). `.stl`, `.3mf`, `.obj` and `.amf` files are opened directly.
@@ -112,8 +127,10 @@ loop or `let` it lives in).
   Groups open on hover; in a narrow preview less important buttons move into a » menu.
 - **Print bed**: outline of the build plate on the grid; when the model is larger (or, with the origin in the front
   left corner, partly outside the bed or below z = 0), the outline turns orange and a warning appears next to the size.
-- **Measure**: click two points on the model (corners snap within 12 px); shows the distance and Δx/Δy/Δz.
-  Esc clears the measurement.
+- **Measure** (menu of the ruler button): *Distance* between two points with Δx/Δy/Δz, *Angle* at the second of three
+  points with the length of both legs, *Diameter* of the circle through three points, e.g. on the edge of a hole
+  (with the radius; the circle is drawn). Corners snap within 12 px, so the corners of a `$fn` polygon give the exact
+  diameter. Esc clears the measurement.
 - **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled and hatched.
 - **Animation**: files that use `$t` get a bar with play, a slider and the number of steps. Each step is one OpenSCAD run
   with `-D $t=…`; computed steps are kept until the code, the Customizer or an included file changes.
@@ -138,9 +155,23 @@ loop or `let` it lives in).
   writes 3MF, STL, OBJ, OFF or AMF next to it. **New .scad File from Model** creates a file with `import("model.stl");`
   to scale, cut or extend a downloaded model.
 
+**MCP tools for AI assistants**
+
+With the IDE's MCP server enabled (*Settings | Tools | MCP Server*) an assistant such as Claude Code or Junie gets
+three tools. They use the OpenSCAD, the library folders and the backend from the settings.
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `scad_render` | `filePath` (`.scad` or mesh file), `views` (`iso`, `top`, `bottom`, `front`, `back`, `right`, `left`; default `iso`), `parameters` (`name=value` per line), `parameterSet`, `imageSize` (default 800), `outputDir` | result (ok, failed, empty, 2D), size and bounding box in mm, triangles, volume, surface, errors/warnings/`echo` with line, paths of the PNG images |
+| `scad_parameters` | `filePath` | Customizer parameters (type, default, range or options, group, description) and the names of the parameter sets |
+| `scad_export` | `filePath`, `targetPath` (format from the extension), `parameters`, `parameterSet` | exported file, errors and warnings |
+
+`scad_render` uses the unsaved editor content if the file is open and modified. The images are written by OpenSCAD
+itself (`-o view.png --camera … --viewall`), so no preview has to be open.
+
 **Settings** (*Settings | Tools | SCAD Sphere*): path to OpenSCAD (found automatically in the usual places of
 macOS, Windows and Linux), additional library folders, when to render, pause before rendering, preview shown on
-opening, slicer for *Open in Slicer*, print bed (size, presets for common printers, origin in the center or the front left corner).
+opening, highlighting the call at the caret, `echo` at the line, slicer for *Open in Slicer*, print bed (size, presets for common printers, origin in the center or the front left corner).
 
 The UI is available in English and German.
 
@@ -204,7 +235,7 @@ The Marketplace description lives in `src/main/resources/META-INF/plugin.xml`, t
 
 Copies `marketplace/demo-project` to `/Users/Shared/scad-demo` (so no user path shows up in the images), opens it in
 the sandbox and writes the PNGs listed in `marketplace/screenshots.txt` (file, theme, layout, `nocustomizer`,
-Customizer values as `set:name=value`, a section as `section:x:0.5[:flip]`, a measurement as `measure:x,y,z;x,y,z` per line). The IDE
+Customizer values as `set:name=value`, a section as `section:x:0.5[:flip]`, a measurement as `measure:[angle:|diameter:]x,y,z;x,y,z`, the caret as `caret:text` per line). The IDE
 paints its own window for this, no screen recording permission is needed. OpenSCAD must be installed for the
 preview. The helper lives in `src/screenshot/` and is only compiled with `-Pscreenshots`, never into a release.
 Close any running sandbox first, and close the sandbox afterwards. `-PscreenshotProject=<folder>` uses another
@@ -224,11 +255,15 @@ project with its own `screenshots.txt`.
 | `lang/ScadCompletion.kt`, `ScadDocumentation.kt`, `ScadParameterInfo.kt` | Completion, quick documentation, parameter info |
 | `lang/ScadColorProvider.kt`, `ScadInlayHints.kt`, `ScadLiveTemplates.kt` | Color swatch for `color()`, parameter name hints, live template context (`resources/liveTemplates/OpenSCAD.xml`) |
 | `lang/ScadInspections.kt`, `ScadIntentions.kt` | Inspections with their quick fixes; create declaration, toggle `#`, inline variable, extract module |
+| `render/EchoLines.kt`, `lang/ScadEchoLinePainter.kt` | Line markers inside `echo(…)` for the preview run, and the values at the end of the line |
+| `render/MeshStats.kt` | Bounding box, triangles, volume and surface of an STL (for the MCP tools) |
+| `mcp/ScadToolset.kt` | MCP tools `scad_render`, `scad_parameters`, `scad_export`; only loaded with the IDE's MCP server plugin (`META-INF/scadsphere-mcp.xml`) |
 | `render/Slicer.kt` | Finding installed slicers and opening a file in them |
+| `psi/ScadLibraryCatalog.kt`, `lang/InstallLibraryFix.kt` | Known libraries with their GitHub repository; download and unpack into the user library folder; the quick fix |
 | `psi/ScadSymbolIndex.kt` | File-based index of top-level modules and functions, Go to Symbol |
 | `lang/ScadFormatting.kt` | Indentation-only formatter and code style settings |
 | `render/RenderMessages.kt`, `lang/ScadRenderAnnotator.kt` | Messages of the last run per preview, as range markers, shown as annotations in the code |
-| `render/CsgOverlay.kt` | Parts with `#`/`%` from OpenSCAD's CSG tree, with the transforms above them, for the second run |
+| `render/CsgOverlay.kt` | Parts with `#`/`%` and the call at the caret from OpenSCAD's CSG tree, with the transforms above them, for the second run |
 | `render/OpenScad.kt`, `OpenScadRender.kt` | Finding OpenSCAD and what it can export, running it (stdin, working directory, `OPENSCADPATH`, `-D`, `-O`), messages, dependencies, export, conversion via `import()` |
 | `customizer/ScadCustomizer.kt` | Customizer parameters after OpenSCAD's rules (tested against OpenSCAD's own `-o file.param`), values, `-D` arguments |
 | `customizer/CustomizerPanel.kt`, `ParameterSets.kt` | The panel next to the preview; parameter sets in OpenSCAD's `<file>.json` |

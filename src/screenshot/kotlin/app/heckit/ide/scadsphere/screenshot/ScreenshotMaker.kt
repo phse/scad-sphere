@@ -28,7 +28,7 @@ import javax.swing.JFrame
  * Erzeugt Screenshots in der Sandbox-IDE (./gradlew runIde -Pscreenshots=...). Zeichnet den Frame selbst in ein
  * Bild, braucht also keine Bildschirmaufnahme-Rechte. Welche Dateien, steht in marketplace/screenshots.txt
  * (bzw. `screenshots.txt` im Projekt bei -PscreenshotProject), je Zeile
- * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:x,y,z;x,y,z] [up:y] [select:teil] [transform]` (`set:` ändert
+ * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:[angle:|diameter:]x,y,z;x,y,z] [up:y] [select:teil] [transform] [caret:text]` (`set:` ändert
  * Customizer-Werte, `export:` nimmt zusätzlich den Export-Dialog für das Format auf, als `bildname-dialog.png`).
  * Ist nur in Builds mit -Pscreenshots enthalten.
  */
@@ -102,13 +102,16 @@ object ScreenshotMaker {
             }
             // section:x:0.5[:flip] und measure:x,y,z;x,y,z stellen den Viewer ein
             val section = words.firstOrNull { it.startsWith("section:") }?.split(':')
-            val measure = words.firstOrNull { it.startsWith("measure:") }?.removePrefix("measure:")
+            // measure:angle:… bzw. measure:diameter:… nehmen drei Punkte, ohne Art ist es der Abstand
+            val measureWord = words.firstOrNull { it.startsWith("measure:") }?.removePrefix("measure:")
+            val measureMode = measureWord?.substringBefore(':', "")?.takeIf { it == "angle" || it == "diameter" } ?: "distance"
+            val measure = measureWord?.removePrefix("$measureMode:")
                 ?.split(';')?.map { point -> point.split(',').map { it.toDouble() } }
             if (section != null || measure != null) {
                 edt {
                     val preview = FileEditorManager.getInstance(project).getEditors(file).filterIsInstance<ScadSplitEditor>().firstOrNull()?.preview
                     section?.let { preview?.invokeViewer("setSection", mapOf("axis" to it[1], "fraction" to it[2].toDouble(), "flip" to (it.getOrNull(3) == "flip"))) }
-                    measure?.let { preview?.invokeViewer("setMeasure", it) }
+                    measure?.let { preview?.invokeViewer("setMeasure", mapOf("mode" to measureMode, "points" to it)) }
                 }
                 Thread.sleep(800)
             }
@@ -121,6 +124,18 @@ object ScreenshotMaker {
                     if ("transform" in words) editor?.invokeViewer("openTransform", listOf("origin", "move", "rotate", "scale"))
                 }
                 Thread.sleep(800)
+            }
+            // caret:text setzt die Schreibmarke auf das erste Vorkommen von text (hebt den Aufruf in der Vorschau hervor)
+            words.firstOrNull { it.startsWith("caret:") }?.removePrefix("caret:")?.let { needle ->
+                edt {
+                    val editor = FileEditorManager.getInstance(project).getEditors(file).filterIsInstance<ScadSplitEditor>().firstOrNull()?.textEditor?.editor
+                    val offset = editor?.document?.text?.indexOf(needle) ?: -1
+                    if (editor != null && offset >= 0) {
+                        editor.caretModel.moveToOffset(offset + 1)
+                        editor.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
+                    }
+                }
+                Thread.sleep(4000)
             }
             if ("messages" in words) {
                 edt { FileEditorManager.getInstance(project).getEditors(file).filterIsInstance<ScadSplitEditor>().firstOrNull()?.preview?.expandMessages() }

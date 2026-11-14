@@ -127,6 +127,14 @@ class ModelViewer(parent: Disposable) : Disposable {
         ))
     }
 
+    /** Den Aufruf an der Schreibmarke (3MF) durchsichtig über dem Modell zeigen; null nimmt ihn weg. */
+    fun setCaretOverlay(bytes: ByteArray?) {
+        if (bytes == null) return call("setCaret", null)
+        val id = "${modelCounter.incrementAndGet()}-caret.3mf"
+        models = models.filterKeys { !it.endsWith("-caret.3mf") } + (id to bytes)
+        call("setCaret", "${ViewerResources.ORIGIN}/model/$id")
+    }
+
     /** Kennung der Datei (Pfad): Darunter merkt sich die IDE die Achse oben (`PropertiesComponent`). */
     @Volatile
     var fileKey: String? = null
@@ -264,7 +272,7 @@ class ModelViewer(parent: Disposable) : Disposable {
         "tool.fit", "tool.iso", "tool.top", "tool.front", "tool.right", "tool.colors", "tool.colors.none", "tool.edges", "tool.ortho", "tool.grid",
         "tool.render", "tool.stop", "tool.customizer", "tool.customizer.none",
         "messages.error", "messages.warning", "messages.echo", "triangles", "parseError", "noWebGl",
-        "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.section", "tool.section.none",
+        "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.measureDistance", "tool.measureAngle", "tool.measureDiameter", "measure.collinear", "tool.section", "tool.section.none",
         "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
         "tool.image", "tool.image.none", "animation.play", "animation.pause", "animation.steps", "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
         "tool.parts", "tool.parts.none", "parts.title", "parts.pick", "parts.separate", "parts.empty", "parts.create", "parts.count",

@@ -12,6 +12,7 @@ import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.panel
 import java.io.File
@@ -31,8 +32,12 @@ class ExportDialog(
     private val batchTargets: List<File>,
     private val choices: List<ExportChoice>,
     private val note: String?,
+    /** Namen der Parametersätze der Datei: Dann lässt sich „alle Sätze“ wählen (je Satz eine Datei). */
+    private val sets: List<String> = emptyList(),
+    allSetsDefault: Boolean = false,
 ) : DialogWrapper(project) {
     private val pathField = TextFieldWithBrowseButton()
+    private val allSetsBox = JBCheckBox(ScadSphereBundle.message("export.dialog.allSets", sets.size), allSetsDefault && sets.isNotEmpty())
     private val boxes = choices.associateWith { choice ->
         ComboBox(choice.values.toTypedArray()).apply {
             renderer = textRenderer { it?.second ?: "" }
@@ -62,6 +67,11 @@ class ExportDialog(
         for ((choice, box) in boxes) {
             row(choice.label) { cell(box) }
         }
+        if (sets.isNotEmpty()) {
+            row {
+                cell(allSetsBox).comment(ScadSphereBundle.message("export.dialog.allSets.comment", StringUtil.escapeXmlEntities(sets.first())), 70)
+            }
+        }
         note?.let { text -> row { comment(StringUtil.escapeXmlEntities(text)) } }
     }.apply { preferredSize = preferredSize.apply { width = maxOf(width, 520) } }
 
@@ -83,6 +93,9 @@ class ExportDialog(
         return if (file.extension.equals(format.extension, ignoreCase = true)) file else File(file.path + "." + format.extension)
     }
 
+    /** Alle Parametersätze exportieren statt der aktuellen Werte. */
+    fun allSets(): Boolean = sets.isNotEmpty() && allSetsBox.isSelected
+
     /** Gewählte Einstellungen (und als zuletzt verwendet gemerkt). */
     fun options(): ExportOptions = boxes.entries.fold(ExportOptions()) { options, (choice, box) ->
         val value = (box.selectedItem as Pair<*, *>).first as String
@@ -97,6 +110,7 @@ class ExportDialog(
         }
         val target = target() ?: return listOf(ValidationInfo(ScadSphereBundle.message("export.dialog.noFile"), pathField))
         if (target.parentFile?.isDirectory != true) return listOf(ValidationInfo(ScadSphereBundle.message("export.dialog.noFolder"), pathField))
+        if (allSets()) return emptyList()
         if (target.exists()) return listOf(ValidationInfo(ScadSphereBundle.message("export.dialog.exists"), pathField).asWarning().withOKEnabled())
         return emptyList()
     }

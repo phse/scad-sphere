@@ -35,6 +35,33 @@ object CsgOverlay {
     }
 
     /**
+     * Marke für den Aufruf an der Schreibmarke: Er wird in eine Farbe gepackt, die im CSG-Baum wiederzufinden ist
+     * (ohne `#`, damit eigene `#`-Teile davon getrennt bleiben). Gleiche Zeile, also gleiche Zeilennummern.
+     */
+    fun markCall(code: String, offset: Int): String = code.substring(0, offset) + CARET_MARK + " " + code.substring(offset)
+
+    /** Wie [build], aber nur die Teile unter der Marke von [markCall]; ohne Farbe (der Viewer färbt sie). */
+    fun buildCaret(csg: String): String? {
+        if (CARET_HEAD !in csg) return null
+        val nodes = runCatching { parse(csg) }.getOrNull() ?: return null
+        val parts = mutableListOf<String>()
+        collectCaret(nodes, emptyList(), parts)
+        return parts.joinToString("\n").ifEmpty { null }
+    }
+
+    private fun collectCaret(nodes: List<Node>, transforms: List<String>, parts: MutableList<String>) {
+        for (node in nodes) {
+            val children = node.children ?: continue
+            if (node.head.startsWith(CARET_HEAD)) {
+                parts += transforms.foldRight(children.joinToString("\n") { write(it) }) { transform, inner -> "$transform {\n$inner\n}" }
+                continue
+            }
+            val next = if (KEPT.any { node.head.startsWith(it) }) transforms + node.head else transforms
+            collectCaret(children, next, parts)
+        }
+    }
+
+    /**
      * Nur Verschiebungen/Drehungen (`multmatrix`) der Eltern bleiben erhalten, CSG-Operationen nicht. Extrusionen
      * bleiben auch: Ein `#`-Teil darin ist 2D und erschiene sonst flach auf z = 0 statt als extrudierter Körper.
      */
@@ -138,6 +165,8 @@ object CsgOverlay {
         }
     }
 
+    private const val CARET_MARK = "color([0.011, 0.022, 0.033])"
+    private const val CARET_HEAD = "color([0.011, 0.022, 0.033"
     private val TIME = Regex("""\${'$'}t\b""")
     private val KEPT = listOf("multmatrix(", "linear_extrude(", "rotate_extrude(")
     private val COMMENTS_AND_STRINGS = Regex("""//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"""")
