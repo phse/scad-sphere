@@ -54,7 +54,7 @@ object ScadColors {
 class ScadSyntaxHighlighter : SyntaxHighlighterBase() {
     override fun getHighlightingLexer(): Lexer = ScadLexer()
 
-    override fun getTokenHighlights(tokenType: IElementType?): Array<TextAttributesKey> = pack(
+    override fun getTokenHighlights(tokenType: IElementType): Array<TextAttributesKey> = pack(
         when (tokenType) {
             in ScadTypes.KEYWORD_SET -> ScadColors.KEYWORD
             ScadTypes.NUMBER -> ScadColors.NUMBER

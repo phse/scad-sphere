@@ -15,6 +15,7 @@ import app.heckit.ide.scadsphere.lang.ScadFileType
 import app.heckit.ide.scadsphere.lang.ScadTypes
 import app.heckit.ide.scadsphere.psi.ScadFile
 import app.heckit.ide.scadsphere.psi.ScadModuleCall
+import app.heckit.ide.scadsphere.psi.ScadModuleDeclaration
 import app.heckit.ide.scadsphere.customizer.formatNumber
 import app.heckit.ide.scadsphere.render.CsgOverlay
 import app.heckit.ide.scadsphere.render.OpenScad
@@ -22,6 +23,7 @@ import app.heckit.ide.scadsphere.render.OpenScadRender
 import app.heckit.ide.scadsphere.render.RenderMessages
 import app.heckit.ide.scadsphere.render.RenderResult
 import app.heckit.ide.scadsphere.viewer.ModelViewer
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
@@ -47,6 +49,8 @@ import com.intellij.openapi.fileTypes.FileTypeRegistry
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Computable
+import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
@@ -54,15 +58,19 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiManager
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.ui.EditorNotificationPanel
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.awt.event.HierarchyEvent
 import java.beans.PropertyChangeListener
 import java.io.File
+import java.awt.BorderLayout
 import javax.swing.JComponent
+import javax.swing.JPanel
 
 /**
  * Vorschau einer .scad-Datei: OpenSCAD rechnet im Hintergrund (Text ungespeichert über stdin), das Ergebnis
@@ -79,6 +87,20 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         firstComponent = viewer.component
         setHonorComponentsMinimumSize(true)
     }
+
+    /** Nur dieses Modul zeigen (Symbol am Zeilenrand): Für die Vorschau wird `!name();` angehängt. */
+    var focusModule: String? = null
+        private set
+    private val focusBanner = EditorNotificationPanel(EditorNotificationPanel.Status.Info).apply {
+        isVisible = false
+        createActionLabel(ScadSphereBundle.message("preview.module.showAll")) { showModule(null) }
+    }
+    private val root = JPanel(BorderLayout()).apply {
+        add(focusBanner, BorderLayout.NORTH)
+        add(splitter, BorderLayout.CENTER)
+    }
+    /** Beim nächsten Modell die Kamera neu einpassen (anderes Modul gewählt) */
+    private var fitNext = false
 
     @Volatile
     private var current: OpenScadRender? = null
@@ -141,15 +163,18 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         parseParameters()
     }
 
-    /** Parameter für den Customizer aus dem (gerade committeten) Code lesen. */
+    /** Parameter für den Customizer und die Module der obersten Ebene aus dem (gerade committeten) Code lesen. */
     private fun parseParameters() {
-        ReadAction.nonBlocking<List<CustomizerParameter>> {
+        ReadAction.nonBlocking<Pair<List<CustomizerParameter>, Set<String>>> {
             val psi = PsiManager.getInstance(project).findFile(file) as? ScadFile
-            psi?.let { ScadCustomizer.parameters(it).map { parsed -> parsed.parameter } }.orEmpty()
+            val parameters = psi?.let { ScadCustomizer.parameters(it).map { parsed -> parsed.parameter } }.orEmpty()
+            parameters to psi?.children?.filterIsInstance<ScadModuleDeclaration>()?.mapNotNull { it.name }.orEmpty().toSet()
         }
             .withDocumentsCommitted(project)
             .expireWith(this)
-            .finishOnUiThread(ModalityState.nonModal()) { parameters ->
+            .finishOnUiThread(ModalityState.nonModal()) { (parameters, modules) ->
+                // Gewähltes Modul umbenannt oder gelöscht: wieder die ganze Datei
+                if (focusModule != null && focusModule !in modules) showModule(null)
                 updateAnimated()
                 customizer.update(parameters)
                 updateCustomizerVisibility()
@@ -183,6 +208,46 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         // Beim Tippen rechnet schon der DocumentListener; gespeichert wird danach nur noch der gleiche Text
         if (own && mode == RenderMode.SAVE) return schedule(0)
         if (changed.any { it.file != file && runCatching { File(it.file.path).canonicalPath }.getOrNull() in dependencies }) schedule(300)
+    }
+
+    /** Nur das Modul [name] zeigen bzw. mit null wieder die ganze Datei. */
+    fun showModule(name: String?) {
+        if (name == focusModule) return
+        focusModule = name
+        file.putUserData(FOCUS_MODULE, name)
+        focusBanner.text = name?.let { ScadSphereBundle.message("preview.module.only", it) } ?: ""
+        focusBanner.isVisible = name != null
+        root.revalidate()
+        fitNext = true
+        caretKey = null
+        // Symbol am Zeilenrand (zeigen / wieder alles zeigen) auffrischen
+        PsiManager.getInstance(project).findFile(file)?.let { DaemonCodeAnalyzer.getInstance(project).restart(it, "SCAD Sphere: module shown in the preview") }
+        schedule(0)
+    }
+
+    /** Text für einen Lauf: mit gewähltem Modul immer über stdin (`!` macht den Aufruf zur Wurzel), sonst nur ungespeichert. */
+    private fun sourceText(unsaved: Boolean): String? {
+        val focus = focusModule ?: return if (unsaved) document?.text else null
+        val code = document?.text ?: runCatching { File(file.path).readText() }.getOrNull() ?: ""
+        return withoutRoots(code) + focusSuffix(focus)
+    }
+
+    /**
+     * Eigene `!` der Datei durch Leerzeichen ersetzen (Stellen bleiben gleich): Bei mehreren gewinnt in OpenSCAD die erste,
+     * das gewählte Modul käme also nie dran. Nur, wenn der PSI-Stand zum Text passt.
+     */
+    private fun withoutRoots(code: String): String {
+        val doc = document ?: return code
+        val manager = PsiDocumentManager.getInstance(project)
+        if (!manager.isCommitted(doc) || doc.text != code) return code
+        val roots = ApplicationManager.getApplication().runReadAction(Computable {
+            val psi = manager.getPsiFile(doc) as? ScadFile ?: return@Computable emptyList<Int>()
+            PsiTreeUtil.findChildrenOfType(psi, ScadModuleCall::class.java).mapNotNull { it.node.findChildByType(ScadTypes.NOT)?.startOffset }
+        })
+        if (roots.isEmpty()) return code
+        val chars = code.toCharArray()
+        for (offset in roots) if (offset < chars.size && chars[offset] == '!') chars[offset] = ' '
+        return String(chars)
     }
 
     /** Neu rechnen nach [delay] ms (spätere Aufrufe verschieben das). */
@@ -223,7 +288,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         current = render
         val run = ++generation
         val unsaved = document != null && FileDocumentManager.getInstance().isDocumentUnsaved(document)
-        val text = if (unsaved) document.text else null
+        val text = sourceText(unsaved)
         val stamp = document?.modificationStamp
         val source = File(file.path)
         val step = frame.takeIf { animated }
@@ -289,13 +354,13 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         val exe = OpenScad.executable()
         if (document == null || start == null || exe == null || isRendering || document.modificationStamp != shownStamp || start > document.textLength) return clearCaret()
         val defines = defines()
-        val key = Triple(shownStamp, start, defines)
+        val key = listOf(shownStamp, start, defines, focusModule)
         if (key == caretKey) return
         caretRender?.cancel()
         caretKey = key
         val render = OpenScadRender(exe)
         caretRender = render
-        val marked = CsgOverlay.markCall(document.text, start)
+        val marked = CsgOverlay.markCall(focusModule?.let { withoutRoots(document.text) + focusSuffix(it) } ?: document.text, start)
         val source = File(file.path)
         ApplicationManager.getApplication().executeOnPooledThread {
             val bytes = runCatching { render.caretOverlay(source, marked, defines) }.getOrNull()
@@ -338,8 +403,9 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         val bytes = result.bytes
         when {
             bytes != null -> {
-                viewer.showModel(bytes, result.format, keepCamera = hasModel, overlay = result.overlay)
+                viewer.showModel(bytes, result.format, keepCamera = hasModel && !fitNext, overlay = result.overlay)
                 hasModel = true
+                fitNext = false
                 file.putUserData(ExportFormat.LAST_RENDER_FORMAT, result.format)
             }
             result.empty -> {
@@ -422,7 +488,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         updateAnimation()
     }
 
-    override fun getComponent(): JComponent = splitter
+    override fun getComponent(): JComponent = root
     override fun getPreferredFocusedComponent(): JComponent? = null
     override fun getName(): String = ScadSphereBundle.message("editor.preview")
     override fun getFile(): VirtualFile = file
@@ -437,14 +503,20 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         current?.cancel()
         caretRender?.cancel()
         RenderMessages.getInstance(project).clear(this, file)
+        if (focusModule != null) file.putUserData(FOCUS_MODULE, null)
     }
 
-    private companion object {
-        const val PARSE_DELAY = 300
-        const val CUSTOMIZER_DELAY = 300
-        const val DEFAULT_STEPS = 24
-        const val FRAME_MS = 100
-        const val CARET_DELAY = 350
+    companion object {
+        /** In der Vorschau gewähltes Modul der Datei (für das Symbol am Zeilenrand) */
+        val FOCUS_MODULE = Key.create<String>("scadsphere.focusModule")
+
+        private fun focusSuffix(module: String) = "\n!$module();\n"
+
+        private const val PARSE_DELAY = 300
+        private const val CUSTOMIZER_DELAY = 300
+        private const val DEFAULT_STEPS = 24
+        private const val FRAME_MS = 100
+        private const val CARET_DELAY = 350
     }
 }
 

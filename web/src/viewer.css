@@ -518,3 +518,35 @@ html, body {
 .parts-row.selected { flex-wrap: wrap; }
 .parts-row.selected .row-tools { flex-basis: 100%; justify-content: flex-end; }
 .parts-chevron-space { flex: none; width: 22px; margin-right: -4px; }
+
+/* Druckprüfung: unter der Werkzeugleiste rechts, bei offenem Schnitt darunter */
+.print-panel {
+  position: absolute;
+  top: 46px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  font-variant-numeric: tabular-nums;
+}
+.print-panel[hidden] { display: none; }
+.section-panel:not([hidden]) ~ .print-panel { top: 84px; }
+.print-head { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.print-head span { flex: 1; }
+.print-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.print-row.muted { color: var(--muted); }
+.print-row.problem { color: var(--error); }
+.print-swatch { flex: none; width: 10px; height: 10px; border-radius: 3px; }
+.print-swatch.none { background: transparent; }
+.print-angle {
+  width: 42px; margin: 0 2px; padding: 1px 3px; border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; color: var(--fg); font: inherit; text-align: right;
+}
+.print-angle:focus, .print-material:focus { outline: none; border-color: var(--active); }
+.print-material {
+  padding: 0 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit;
+}

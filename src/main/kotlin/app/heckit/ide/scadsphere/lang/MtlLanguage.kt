@@ -147,7 +147,7 @@ class MtlFile(viewProvider: FileViewProvider) : PsiFileBase(viewProvider, MtlLan
 
 class MtlSyntaxHighlighter : SyntaxHighlighterBase() {
     override fun getHighlightingLexer(): Lexer = MtlLexer()
-    override fun getTokenHighlights(tokenType: IElementType?): Array<TextAttributesKey> = when (tokenType) {
+    override fun getTokenHighlights(tokenType: IElementType): Array<TextAttributesKey> = when (tokenType) {
         MtlTypes.COMMENT -> pack(COMMENT)
         MtlTypes.NEWMTL -> pack(KEYWORD)
         MtlTypes.KEYWORD -> pack(PROPERTY)

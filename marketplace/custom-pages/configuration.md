@@ -20,6 +20,10 @@
 
 Parameter name hints: *Settings | Editor | Inlay Hints | Parameter names*.
 
+Icon to show a single module in the preview: *Settings | Editor | General | Gutter Icons | Show a single module in the preview*.
+
+Print check in the viewer: the overhang angle and the material are chosen in the panel and remembered.
+
 ## Library lookup
 
 `include <…>` and `use <…>` are resolved in this order:

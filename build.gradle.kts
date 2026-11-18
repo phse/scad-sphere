@@ -96,6 +96,16 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.6.0</h3>
+            <ul>
+              <li>Print check in the viewer: overhangs that need supports in red (angle adjustable), the area lying on the
+                  bed in green, open edges and edges with more than two faces, volume, weight and filament length for
+                  PLA, PETG, ABS, ASA, TPU, PA and PC.</li>
+              <li>Show a single module: an icon next to every module renders only this module in the preview, also in
+                  library files that draw nothing themselves. A second click shows the whole file again.</li>
+              <li>New intention: turn a number into a Customizer parameter - a variable with a slider is added after the
+                  last parameter and the number is replaced by its name.</li>
+            </ul>
             <h3>1.5.0</h3>
             <ul>
               <li>The call at the caret is highlighted in the preview, also parts subtracted in a <code>difference()</code>;

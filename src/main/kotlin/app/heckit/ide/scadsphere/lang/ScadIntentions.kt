@@ -1,12 +1,15 @@
 package app.heckit.ide.scadsphere.lang
 
 import app.heckit.ide.scadsphere.ScadSphereBundle
+import app.heckit.ide.scadsphere.customizer.ScadCustomizer
+import app.heckit.ide.scadsphere.customizer.formatNumber
 import app.heckit.ide.scadsphere.psi.ScadArgument
 import app.heckit.ide.scadsphere.psi.ScadAssignment
 import app.heckit.ide.scadsphere.psi.ScadCallableDeclaration
 import app.heckit.ide.scadsphere.psi.ScadFile
 import app.heckit.ide.scadsphere.psi.ScadModuleCall
 import app.heckit.ide.scadsphere.psi.ScadNamedElement
+import app.heckit.ide.scadsphere.psi.Namespace
 import app.heckit.ide.scadsphere.psi.ScadReference
 import app.heckit.ide.scadsphere.psi.ScadReferenceExpression
 import app.heckit.ide.scadsphere.psi.ScadResolver
@@ -248,5 +251,133 @@ class ExtractModuleIntention : IntentionAction {
         var element: PsiElement = leaf
         while (element.parent != null && element.parent !is ScadFile && element.parent.node.elementType != ScadTypes.BLOCK) element = element.parent
         return element.takeIf { it.parent != null }
+    }
+}
+
+/**
+ * Zahl im Code als Customizer-Parameter: neue Zuweisung mit Schieberegler-Kommentar hinter dem letzten Parameter der
+ * Datei (bzw. oben, vor der ersten Anweisung), die Zahl wird durch den Namen ersetzt.
+ */
+class MakeCustomizerParameterIntention : PsiElementBaseIntentionAction() {
+    override fun getFamilyName(): String = ScadSphereBundle.message("intention.makeParameter")
+    override fun startInWriteAction(): Boolean = false
+
+    override fun isAvailable(project: Project, editor: Editor?, element: PsiElement): Boolean {
+        val number = number(element, editor) ?: return false
+        val file = number.containingFile as? ScadFile ?: return false
+        // Schon der Wert eines Parameters
+        if (ScadCustomizer.parameters(file).any { it.valueRange == number.textRange }) return false
+        text = ScadSphereBundle.message("intention.makeParameter")
+        return true
+    }
+
+    override fun invoke(project: Project, editor: Editor?, element: PsiElement) {
+        val number = number(element, editor) ?: return
+        val file = number.containingFile as? ScadFile ?: return
+        val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
+        val taken = { name: String ->
+            ScadResolver.resolve(number, name, Namespace.VARIABLE).isNotEmpty() ||
+                file.children.any { it is ScadAssignment && it.name == name }
+        }
+        val base = suggestName(number)
+        val suggestion = generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base$it" }.first { !taken(it) }
+        val name = if (ApplicationManager.getApplication().isUnitTestMode) suggestion else Messages.showInputDialog(
+            project, ScadSphereBundle.message("intention.makeParameter.name"), familyName, null, suggestion,
+            object : InputValidator {
+                override fun checkInput(input: String?) = input != null && IDENTIFIER.matches(input) && !taken(input)
+                override fun canClose(input: String?) = checkInput(input)
+            },
+        ) ?: return
+        val valueText = number.text
+        val declaration = "$name = $valueText; // ${sliderRange(valueText)}"
+        val (insertAt, insertText) = insertion(file, document, declaration)
+        val replace = number.textRange
+        WriteCommandAction.runWriteCommandAction(project, familyName, null, {
+            if (insertAt >= replace.endOffset) {
+                document.insertString(insertAt, insertText)
+                document.replaceString(replace.startOffset, replace.endOffset, name)
+            } else {
+                document.replaceString(replace.startOffset, replace.endOffset, name)
+                document.insertString(insertAt, insertText)
+            }
+            PsiDocumentManager.getInstance(project).commitDocument(document)
+            val shift = if (insertAt < replace.startOffset) insertText.length else 0
+            editor?.caretModel?.moveToOffset(replace.startOffset + shift)
+        }, file)
+    }
+
+    /**
+     * Zahl-Literal unter dem Cursor oder direkt davor (Cursor hinter `5,`), mit Vorzeichen (`-5`); nicht, wenn sie schon
+     * allein einer Variablen zugewiesen ist.
+     */
+    private fun number(element: PsiElement, editor: Editor?): PsiElement? {
+        val offset = editor?.caretModel?.offset
+        val leaf = if (element.node.elementType != ScadTypes.NUMBER && offset != null && offset > 0) {
+            element.containingFile.findElementAt(offset - 1)
+        } else element
+        if (leaf == null || leaf.node.elementType != ScadTypes.NUMBER) return null
+        val literal = leaf.parent?.takeIf { it.node.elementType == ScadTypes.LITERAL_EXPRESSION } ?: return null
+        val parent = literal.parent
+        val number = if (parent != null && parent.node.elementType == ScadTypes.UNARY_EXPRESSION && parent.firstChild?.node?.elementType == ScadTypes.MINUS) parent else literal
+        return number.takeIf { it.parent !is ScadAssignment }
+    }
+
+    /** Name aus dem Parameter, an den die Zahl geht: `cylinder(r = 2)` → `cylinder_r`, `cube([20, 10, 5])` → `size_x`, `translate([0, 0, 5])` → `translate_z`. */
+    private fun suggestName(number: PsiElement): String {
+        var value: PsiElement = number
+        var axis: String? = null
+        val parent = value.parent
+        if (parent != null && parent.node.elementType == ScadTypes.VECTOR_EXPRESSION) {
+            val items = parent.children.toList()
+            if (items.size in 2..4) axis = listOf("x", "y", "z", "w")[items.indexOf(value)]
+            value = parent
+        }
+        (value.parent as? ScadAssignment)?.let { assignment ->
+            return listOfNotNull(assignment.name, axis).joinToString("_")
+        }
+        val argument = value.parent as? ScadArgument ?: return "value"
+        val (callee, parameter) = ScadInlayParameterHintsProvider.calleeAndParameter(argument) ?: return "value"
+        val head = when {
+            parameter == null || (parameter.length <= 2 && axis != null) -> callee
+            parameter.length <= 2 -> "${callee}_$parameter"
+            else -> parameter
+        }
+        return listOfNotNull(head, axis).joinToString("_").replace(Regex("[^A-Za-z0-9_]"), "_").let {
+            if (it.first().isDigit()) "_$it" else it
+        }
+    }
+
+    /** Stelle und Text: Zeile hinter dem letzten Customizer-Parameter, sonst vor der ersten Anweisung der Datei. */
+    private fun insertion(file: ScadFile, document: com.intellij.openapi.editor.Document, declaration: String): Pair<Int, String> {
+        val last = ScadCustomizer.parameters(file).lastOrNull()
+        if (last != null) {
+            val line = document.getLineNumber(last.valueRange.endOffset)
+            return document.getLineEndOffset(line) to "\n$declaration"
+        }
+        val first = file.children.firstOrNull {
+            it !is PsiComment && it !is PsiWhiteSpace && it.node.elementType != ScadTypes.INCLUDE_STATEMENT && it.node.elementType != ScadTypes.USE_STATEMENT
+        } ?: return document.textLength to (if (document.textLength == 0 || document.text.endsWith("\n")) "" else "\n") + "$declaration\n"
+        val start = document.getLineStartOffset(document.getLineNumber(first.textRange.startOffset))
+        return start to "$declaration\n\n"
+    }
+
+    companion object {
+        /** Schieberegler um den Wert: `[0:20]` für 10, `[0:0.1:5]` für 1.5, `[-20:20]` für -10. */
+        fun sliderRange(valueText: String): String {
+            val value = valueText.toDoubleOrNull() ?: return "[0:100]"
+            val magnitude = kotlin.math.abs(value)
+            val max = niceCeil(magnitude * 2)
+            val min = if (value < 0) -max else 0.0
+            val decimals = valueText.substringAfter('.', "").takeIf { '.' in valueText && 'e' !in valueText.lowercase() }?.length ?: 0
+            if (decimals == 0) return "[${formatNumber(min)}:${formatNumber(max)}]"
+            val step = java.math.BigDecimal.ONE.movePointLeft(decimals.coerceAtMost(4)).toPlainString()
+            return "[${formatNumber(min)}:$step:${formatNumber(max)}]"
+        }
+
+        private fun niceCeil(x: Double): Double {
+            if (x <= 0.0) return 10.0
+            val power = Math.pow(10.0, kotlin.math.floor(kotlin.math.log10(x)))
+            return listOf(1.0, 2.0, 5.0, 10.0).map { it * power }.first { it >= x - 1e-9 }
+        }
     }
 }

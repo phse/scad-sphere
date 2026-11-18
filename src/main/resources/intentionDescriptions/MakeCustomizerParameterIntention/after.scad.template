@@ -1,0 +1,4 @@
+width = 40; // [10:100]
+cylinder_h = 12; // [0:50]
+
+cylinder(h = cylinder_h, r = 3);

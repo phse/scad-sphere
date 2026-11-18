@@ -63,6 +63,10 @@ loop or `let` it lives in).
 - **Quick fixes and intentions** (⌥⏎ / Alt+Enter): create an unknown module or function, remove an unused variable or
   `use`, replace a deprecated name, highlight with `#` or remove it, inline a variable, extract the selected statements into a module (local names
   become parameters).
+- **Make Customizer parameter** (intention on a number): adds `name = 12; // [0:50]` after the last Customizer parameter
+  of the file (or at the top) and puts the name in place of the number. The name comes from the parameter the number is
+  passed to (`cylinder(h = 12)` → `cylinder_h`, `cube([20, 1.5, 5])` → `size_y`), the slider reaches twice the value,
+  decimals get a matching step.
 - Structure view, folding (blocks, comments, long vectors), comment/uncomment, brace matching, TODO comments.
 - Indentation on Enter and **Reformat Code** (indentation only; spacing within lines stays as written).
   Indent size in *Settings | Editor | Code Style | OpenSCAD*.
@@ -86,6 +90,10 @@ loop or `let` it lives in).
   over the model - also parts that a `difference()` subtracts, and every instance if the call sits in a module. The
   file is not changed: the call is wrapped in a marker color for a run that only writes the CSG tree, the marked
   subtree is rendered separately. Off in the settings.
+- **Show a single module**: an icon in the gutter next to every module of the file renders only this module, with its
+  default arguments (the preview run gets `!name();` appended; other `!` of the file are left out for it). Useful for
+  library files that draw nothing themselves. A bar above the preview names the module; the icon, now a cross, or
+  *Show whole file* goes back. Off in *Settings | Editor | General | Gutter Icons*.
 - Editor toolbar: **Export with OpenSCAD ▸** and **Open in OpenSCAD** (also in the project tree and the editor tab
   menu). Render again (stop while rendering) and the Customizer button sit at the right end of the viewer toolbar.
 
@@ -132,6 +140,11 @@ loop or `let` it lives in).
   (with the radius; the circle is drawn). Corners snap within 12 px, so the corners of a `$fn` polygon give the exact
   diameter. Esc clears the measurement.
 - **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled and hatched.
+- **Print check** (nozzle button): faces pointing down more steeply than the overhang angle (45° by default, adjustable)
+  in red with their area - they need supports; faces lying on the bed in green with their area; open edges and edges
+  shared by more than two faces drawn in red, also through the model; volume, weight and length of 1.75 mm filament for
+  a solid print, with the density of PLA, PETG, ABS, ASA, TPU, PA or PC. Edges are counted over the whole model, so parts
+  that share an edge show up as edges with more than two faces; hidden parts are left out; angle and material are remembered.
 - **Animation**: files that use `$t` get a bar with play, a slider and the number of steps. Each step is one OpenSCAD run
   with `-D $t=…`; computed steps are kept until the code, the Customizer or an included file changes.
 - **Parts** (OBJ, 3MF, AMF): the parts grouped by material or color, with show/hide per part or material and a
@@ -256,6 +269,7 @@ project with its own `screenshots.txt`.
 | `lang/ScadColorProvider.kt`, `ScadInlayHints.kt`, `ScadLiveTemplates.kt` | Color swatch for `color()`, parameter name hints, live template context (`resources/liveTemplates/OpenSCAD.xml`) |
 | `lang/ScadInspections.kt`, `ScadIntentions.kt` | Inspections with their quick fixes; create declaration, toggle `#`, inline variable, extract module |
 | `render/EchoLines.kt`, `lang/ScadEchoLinePainter.kt` | Line markers inside `echo(…)` for the preview run, and the values at the end of the line |
+| `lang/ScadModuleLineMarker.kt` | Gutter icon to show a single module in the preview |
 | `render/MeshStats.kt` | Bounding box, triangles, volume and surface of an STL (for the MCP tools) |
 | `mcp/ScadToolset.kt` | MCP tools `scad_render`, `scad_parameters`, `scad_export`; only loaded with the IDE's MCP server plugin (`META-INF/scadsphere-mcp.xml`) |
 | `render/Slicer.kt` | Finding installed slicers and opening a file in them |
@@ -272,7 +286,7 @@ project with its own `screenshots.txt`.
 | `viewer/ModelViewer.kt`, `ViewerResources.kt` | JCEF browser with the viewer, served from `https://scadsphere.ide/`; the model goes in as a file, commands as JavaScript |
 | `editor/ScadPreviewEditor.kt` | Split editor and preview: when to render, keeping the camera, navigation from messages |
 | `editor/ModelFileEditor.kt` | Viewer for `.stl`, `.3mf`, `.obj`, `.off`, `.amf` with the convert toolbar |
-| `web/src/viewer.js` | three.js scene: loaders (STL, 3MF, OBJ, AMF, OpenSCAD's SVG), colors or monochrome, camera, grid, edges, toolbar, messages |
+| `web/src/viewer.js` | three.js scene: loaders (STL, 3MF, OBJ, AMF, OpenSCAD's SVG), colors or monochrome, camera, grid, edges, toolbar, messages, print check (`analyzePrint`) |
 | `web/src/offLoader.js` | OFF with colors per face, as OpenSCAD writes it |
 
 Since 2026.x JCEF renders off-screen and a non-passive `wheel` listener makes Chromium wait for the page on every

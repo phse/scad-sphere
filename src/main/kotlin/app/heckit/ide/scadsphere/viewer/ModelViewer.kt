@@ -273,6 +273,7 @@ class ModelViewer(parent: Disposable) : Disposable {
         "tool.render", "tool.stop", "tool.customizer", "tool.customizer.none",
         "messages.error", "messages.warning", "messages.echo", "triangles", "parseError", "noWebGl",
         "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.measureDistance", "tool.measureAngle", "tool.measureDiameter", "measure.collinear", "tool.section", "tool.section.none",
+        "tool.print", "tool.print.none", "print.title", "print.overhang", "print.overhangTip", "print.none", "print.contact", "print.contactTip", "print.closed", "print.open", "print.nonManifold", "print.openTip", "print.solidTip",
         "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
         "tool.image", "tool.image.none", "animation.play", "animation.pause", "animation.steps", "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
         "tool.parts", "tool.parts.none", "parts.title", "parts.pick", "parts.separate", "parts.empty", "parts.create", "parts.count",

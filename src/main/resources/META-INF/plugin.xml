@@ -27,7 +27,8 @@
   <li><code>echo</code> output at the end of its line, like inline values in a debugger.</li>
   <li>Inspections: unused parameters and variables, variables assigned twice, unused <code>use</code>, missing arguments,
       deprecated modules and arguments (<code>assign</code>, <code>child</code>, <code>import_stl</code>, ...).
-      Quick fixes and intentions: create an unknown module or function, inline a variable, extract a module, toggle <code>#</code>.</li>
+      Quick fixes and intentions: create an unknown module or function, inline a variable, extract a module, toggle <code>#</code>,
+      turn a number into a Customizer parameter with a slider.</li>
   <li>Documentation of the built-in modules and functions with a link to the manual; comments above your own modules, BOSL2 doc blocks and NopSCADlib <code>//!</code> comments.</li>
   <li>Structure view, folding, commenting, brace matching, indentation and Reformat Code.</li>
 </ul>
@@ -40,8 +41,11 @@
   <li>Views (isometric, top, front, right), colors or one color, edges, orthographic projection, grid and the size of the model in mm.</li>
   <li>Parts marked with <code>#</code> and <code>%</code> appear transparent, like in OpenSCAD's own preview.</li>
   <li>The call at the caret is highlighted in the model, also parts subtracted in a <code>difference()</code> - without changing the file.</li>
+  <li>Show a single module: an icon next to every module renders only this one, also in library files that draw nothing themselves.</li>
   <li>Print bed outline (size and origin configurable, presets for common printers) and a warning when the model does not fit.</li>
   <li>Measure distances, angles and diameters of holes (snaps to corners) and a hatched section view along X, Y or Z.</li>
+  <li><b>Print check</b>: overhangs that need supports in red (angle adjustable), the area lying on the bed, open edges,
+      volume, weight and filament length for PLA, PETG, ABS and more.</li>
   <li>Animation of <code>$t</code> with play and slider; save the current view as PNG.</li>
   <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change.
       Convert them to another format (also several at once), or start a new .scad file that imports them.</li>
@@ -162,6 +166,7 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <localInspection language="heckit.OpenSCAD" groupName="OpenSCAD" enabledByDefault="true" level="WARNING" shortName="ScadDeprecated"
                          implementationClass="app.heckit.ide.scadsphere.lang.ScadDeprecatedInspection" key="inspection.deprecated.name" bundle="messages.ScadSphereBundle"/>
         <editor.linePainter implementation="app.heckit.ide.scadsphere.lang.ScadEchoLinePainter"/>
+        <codeInsight.lineMarkerProvider language="heckit.OpenSCAD" implementationClass="app.heckit.ide.scadsphere.lang.ScadModuleLineMarkerProvider"/>
         <intentionAction>
             <language>heckit.OpenSCAD</language>
             <className>app.heckit.ide.scadsphere.lang.ToggleHighlightIntention</className>
@@ -177,6 +182,12 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <intentionAction>
             <language>heckit.OpenSCAD</language>
             <className>app.heckit.ide.scadsphere.lang.ExtractModuleIntention</className>
+            <bundleName>messages.ScadSphereBundle</bundleName>
+            <categoryKey>intention.category</categoryKey>
+        </intentionAction>
+        <intentionAction>
+            <language>heckit.OpenSCAD</language>
+            <className>app.heckit.ide.scadsphere.lang.MakeCustomizerParameterIntention</className>
             <bundleName>messages.ScadSphereBundle</bundleName>
             <categoryKey>intention.category</categoryKey>
         </intentionAction>

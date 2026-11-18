@@ -32,6 +32,8 @@ const settings = {
   parts: true,
   transformRows: ['origin', 'move', 'rotate', 'scale'],
   transformOrigin: ['mid', 'mid', 'min'],
+  printAngle: 45,
+  printMaterial: 'PLA',
   ...readStored(),
 }
 
@@ -494,11 +496,14 @@ function setModel(object, keepCamera) {
   renderParts()
   renderTransform()
   applyHighlight()
+  refreshPrintCheck()
   requestRender()
 }
 
 function clearModel() {
   removeCaps()
+  removePrintOverlay()
+  if (print.on && print.result) { print.result = null; renderPrintPanel() }
   caretId++
   removeCaret()
   if (overlay) {
@@ -642,6 +647,8 @@ const directions = {
   right: new Vector3(1, 0, 0),
   back: new Vector3(0, 1, 0),
   left: new Vector3(-1, 0, 0),
+  // Nicht im Menü: schräg von unten (Überhänge und Auflage der Druckprüfung, Screenshots)
+  below: new Vector3(0.6, 0.65, -0.45),
 }
 
 function fit(direction, animate = true) {
@@ -753,6 +760,7 @@ const icons = {
   display: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
   more: '<path d="M4 4.5 7.5 8 4 11.5M8.5 4.5 12 8l-3.5 3.5"/>',
   image: '<path d="M2 5.5a1 1 0 0 1 1-1h2l1-1.5h4l1 1.5h2a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><circle cx="8" cy="8.5" r="2.4"/>',
+  print: '<path d="M5.5 2h5v2.5l-1.5 2h-2l-1.5-2z"/><path d="M8 6.5v1.5"/><path d="M2 13.5h12M3.5 11h9" />',
   colors: '<circle cx="5.9" cy="6" r="3.4"/><circle cx="10.1" cy="6" r="3.4"/><circle cx="8" cy="9.8" r="3.4"/>',
 }
 
@@ -823,6 +831,7 @@ function setUp(axis) {
   fit('iso', false)
   updateOrthoFrustum()
   updateToolbar()
+  refreshPrintCheck()
   requestRender()
 }
 
@@ -863,6 +872,7 @@ function toolbarEntries() {
       { name: 'transform', action: toggleTransform, isOn: () => transformOpen, enabled: () => hasModel, keep: 4.5 },
     ] : []),
     { name: 'section', action: toggleSection, isOn: () => section.on, enabled: () => hasModel, keep: 2 },
+    { name: 'print', action: togglePrint, isOn: () => print.on, enabled: () => hasModel && !modelIsFlat(), keep: 2.5 },
     { name: 'image', action: () => host.send({ type: 'image', data: snapshot() }), enabled: () => hasModel, keep: 0 },
     ...(tools ? [
       'sep',
@@ -1585,6 +1595,7 @@ function applySection() {
   })
   forEachMaterial(overlay, (material) => { material.clippingPlanes = planes; material.needsUpdate = true })
   forEachMaterial(caretOverlay, (material) => { material.clippingPlanes = planes; material.needsUpdate = true })
+  printOverlay?.traverse((child) => { if (child.material) { child.material.clippingPlanes = planes; child.material.needsUpdate = true } })
   edges?.traverse((child) => { if (child.material) { child.material.clippingPlanes = planes; child.material.needsUpdate = true } })
   if (section.on && !caps) buildCaps()
   if (!section.on) removeCaps()
@@ -1632,6 +1643,242 @@ function rebuildCaps() {
 }
 
 // --- Status, leere Ansicht, Meldungen ---
+
+// --- Druckprüfung: Überhänge, offene Kanten, Auflage auf dem Bett, Volumen und Gewicht ---
+
+// Dichte in g/cm³ (übliche Herstellerangaben)
+const MATERIALS = { PLA: 1.24, PETG: 1.27, ABS: 1.04, ASA: 1.07, TPU: 1.21, PA: 1.14, PC: 1.2 }
+const FILAMENT_AREA = Math.PI * 0.875 ** 2   // 1,75 mm
+const OVERHANG_COLOR = '#e5484d'
+const CONTACT_COLOR = '#30a46c'
+const print = { on: false, result: null, timer: null }
+let printOverlay = null
+
+const printPanel = document.createElement('div')
+printPanel.className = 'print-panel'
+printPanel.hidden = true
+document.body.appendChild(printPanel)
+
+/** Druckprüfung von außen ein- oder ausschalten (Screenshot-Helfer). */
+function setPrint(on) {
+  if (print.on !== !!on) togglePrint()
+}
+
+function togglePrint() {
+  print.on = !print.on
+  printPanel.hidden = !print.on
+  if (print.on) refreshPrintCheck()
+  else removePrintOverlay()
+  updateToolbar()
+  requestRender()
+}
+
+function removePrintOverlay() {
+  if (!printOverlay) return
+  scene.remove(printOverlay)
+  printOverlay.traverse((child) => { child.geometry?.dispose(); child.material?.dispose() })
+  printOverlay = null
+}
+
+/** Nach einem neuen Modell, anderer Achse oder ausgeblendeten Teilen neu prüfen (gebündelt, große Modelle brauchen etwas). */
+function refreshPrintCheck() {
+  if (!print.on) return
+  clearTimeout(print.timer)
+  print.timer = setTimeout(runPrintCheck, 0)
+}
+
+/** Ein flaches Modell (SVG) hat nichts zu drucken. */
+const modelIsFlat = () => !hasModel || bounds.max.z - bounds.min.z < 1e-9
+
+function runPrintCheck() {
+  removePrintOverlay()
+  print.result = model && !modelIsFlat() ? analyzePrint(model, Number(settings.printAngle) || 45) : null
+  if (print.result) {
+    printOverlay = buildPrintOverlay(print.result)
+    scene.add(printOverlay)
+    applySection()
+  }
+  renderPrintPanel()
+  requestRender()
+}
+
+/**
+ * Dreiecke aller sichtbaren Teile in Szenen-Koordinaten (Z oben, nach der Achse der Datei gedreht). Kanten zählen über
+ * alle Meshes zusammen: Der 3MF-Loader teilt ein Objekt je Farbe/Material in mehrere Meshes, deren Grenzen sonst als offene
+ * Kanten gälten (OpenSCAD-Vorschau, 2026-11-19).
+ */
+function analyzePrint(object, angle) {
+  object.updateMatrixWorld(true)
+  const minZ = bounds.min.z
+  const size = bounds.getSize(new Vector3()).length()
+  const flatEps = Math.max(size * 1e-6, 1e-6)
+  const sinAngle = Math.sin(angle * Math.PI / 180)
+  const overhang = []
+  const contact = []
+  const openEdges = []
+  let volume = 0
+  let overhangArea = 0
+  let contactArea = 0
+  let open = 0
+  let nonManifold = 0
+  const a = new Vector3(), b = new Vector3(), c = new Vector3(), ab = new Vector3(), ac = new Vector3(), n = new Vector3()
+  // Gleiche Punkte zusammenfassen (STL wiederholt jeden Punkt je Dreieck)
+  const quantum = Math.max(size * 1e-7, 1e-7)
+  const ids = new Map()
+  const id = (v) => {
+    const key = `${Math.round(v.x / quantum)},${Math.round(v.y / quantum)},${Math.round(v.z / quantum)}`
+    let value = ids.get(key)
+    if (value === undefined) { value = ids.size; ids.set(key, value) }
+    return value
+  }
+  const edgeUses = new Map()
+  const edgeEnds = new Map()
+  const addEdge = (i, j, p, q) => {
+    if (i === j) return
+    const key = i < j ? i * 67108864 + j : j * 67108864 + i
+    edgeUses.set(key, (edgeUses.get(key) || 0) + 1)
+    if (!edgeEnds.has(key)) edgeEnds.set(key, [p.x, p.y, p.z, q.x, q.y, q.z])
+  }
+  object.traverse((child) => {
+    if (!child.isMesh || !child.visible) return
+    const position = child.geometry.attributes.position
+    if (!position) return
+    const index = child.geometry.index
+    const count = index ? index.count : position.count
+    const matrix = child.matrixWorld
+    // Spiegelnde Transformation dreht die Umlaufrichtung - Volumen dann mit umgekehrtem Vorzeichen
+    const sign = matrix.determinant() < 0 ? -1 : 1
+    for (let t = 0; t + 2 < count; t += 3) {
+      const ia = index ? index.getX(t) : t, ib = index ? index.getX(t + 1) : t + 1, ic = index ? index.getX(t + 2) : t + 2
+      a.fromBufferAttribute(position, ia).applyMatrix4(matrix)
+      b.fromBufferAttribute(position, ib).applyMatrix4(matrix)
+      c.fromBufferAttribute(position, ic).applyMatrix4(matrix)
+      volume += sign * a.dot(ab.copy(b).cross(c)) / 6
+      n.crossVectors(ab.subVectors(b, a), ac.subVectors(c, a))
+      const doubleArea = n.length()
+      if (doubleArea > 0) {
+        n.divideScalar(doubleArea)
+        if (sign < 0) n.negate()
+        const area = doubleArea / 2
+        const onBed = Math.max(a.z, b.z, c.z) - minZ < flatEps
+        if (onBed && n.z < -0.99) {
+          contactArea += area
+          contact.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z)
+        } else if (!onBed && -n.z > sinAngle) {
+          overhangArea += area
+          overhang.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z)
+        }
+      }
+      const pa = id(a), pb = id(b), pc = id(c)
+      addEdge(pa, pb, a, b)
+      addEdge(pb, pc, b, c)
+      addEdge(pc, pa, c, a)
+    }
+  })
+  for (const [key, uses] of edgeUses) {
+    if (uses === 2) continue
+    if (uses === 1) open++
+    else nonManifold++
+    openEdges.push(...edgeEnds.get(key))
+  }
+  return { volume: Math.abs(volume), overhangArea, contactArea, open, nonManifold, overhang, contact, openEdges, angle }
+}
+
+function buildPrintOverlay(result) {
+  const group = new Group()
+  const surface = (positions, color) => {
+    if (!positions.length) return
+    const geometry = new BufferGeometry()
+    geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
+    geometry.computeVertexNormals()
+    // Knapp vor dem Modell zeichnen, damit die Fläche nicht flimmert
+    const material = new MeshPhongMaterial({ color, flatShading: true, side: DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
+    group.add(new Mesh(geometry, material))
+  }
+  surface(result.overhang, OVERHANG_COLOR)
+  surface(result.contact, CONTACT_COLOR)
+  if (result.openEdges.length) {
+    const geometry = new BufferGeometry()
+    geometry.setAttribute('position', new Float32BufferAttribute(result.openEdges, 3))
+    // Auch durch das Modell hindurch sichtbar - sonst findet man Lücken auf der Rückseite nicht
+    const lines = new LineSegments(geometry, new LineBasicMaterial({ color: OVERHANG_COLOR, depthTest: false }))
+    lines.renderOrder = 10
+    group.add(lines)
+  }
+  return group
+}
+
+function renderPrintPanel() {
+  printPanel.textContent = ''
+  const head = document.createElement('div')
+  head.className = 'print-head'
+  head.appendChild(Object.assign(document.createElement('span'), { textContent: labels['print.title'] || 'Print check' }))
+  head.appendChild(iconButton('close', labels['close'] || 'Close', togglePrint))
+  printPanel.appendChild(head)
+  const result = print.result
+  if (!result) {
+    printPanel.appendChild(Object.assign(document.createElement('div'), { className: 'print-row muted', textContent: labels['tool.print.none'] || 'Only for 3D models' }))
+    return
+  }
+  const locale = init.locale || undefined
+  const number = (value, digits = 1) => value.toLocaleString(locale, { maximumFractionDigits: digits })
+  const area = (mm2) => mm2 <= 0 ? (labels['print.none'] || 'none') : mm2 < 100 ? `${number(mm2, 1)} mm²` : `${number(mm2 / 100, 2)} cm²`
+  const row = (swatch, html, tip) => {
+    const element = document.createElement('div')
+    element.className = 'print-row'
+    if (tip) element.dataset.tip = tip
+    if (swatch) element.appendChild(Object.assign(document.createElement('span'), { className: 'print-swatch' })).style.background = swatch
+    else element.appendChild(Object.assign(document.createElement('span'), { className: 'print-swatch none' }))
+    const text = document.createElement('span')
+    text.innerHTML = html
+    element.appendChild(text)
+    printPanel.appendChild(element)
+    return element
+  }
+  const format = (key, fallback, ...values) => values.reduce((text, value, i) => text.replace(`{${i}}`, value), labels[key] || fallback)
+  const escape = (text) => String(text).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]))
+
+  // Überhänge mit einstellbarem Winkel
+  const overhangRow = row(OVERHANG_COLOR, '', labels['print.overhangTip'])
+  const overhangText = overhangRow.lastChild
+  const parts = (labels['print.overhang'] || 'Overhangs over {0}°: {1}').split(/(\{[01]\})/)
+  for (const part of parts) {
+    if (part === '{0}') {
+      const input = Object.assign(document.createElement('input'), { type: 'number', min: '10', max: '80', step: '5', value: String(result.angle), className: 'print-angle' })
+      input.addEventListener('change', () => {
+        const value = Math.min(80, Math.max(10, Number(input.value) || 45))
+        settings.printAngle = value
+        store()
+        runPrintCheck()
+      })
+      overhangText.appendChild(input)
+    } else if (part === '{1}') {
+      overhangText.appendChild(document.createTextNode(area(result.overhangArea)))
+    } else {
+      overhangText.appendChild(document.createTextNode(part))
+    }
+  }
+  row(CONTACT_COLOR, escape(format('print.contact', 'On the bed: {0}', area(result.contactArea))), labels['print.contactTip'])
+  const closed = result.open === 0 && result.nonManifold === 0
+  const edgeText = closed ? (labels['print.closed'] || 'Closed surface')
+    : [result.open ? format('print.open', '{0} open edges', result.open) : null, result.nonManifold ? format('print.nonManifold', '{0} edges with more than two faces', result.nonManifold) : null].filter(Boolean).join(' · ')
+  const edgeRow = row(closed ? null : OVERHANG_COLOR, escape(edgeText), closed ? null : labels['print.openTip'])
+  if (!closed) edgeRow.classList.add('problem')
+
+  // Volumen, Gewicht und Filament (voll gedruckt, die Füllung im Slicer macht es leichter)
+  const material = MATERIALS[settings.printMaterial] ? settings.printMaterial : 'PLA'
+  const cm3 = result.volume / 1000
+  const grams = cm3 * MATERIALS[material]
+  const meters = result.volume / FILAMENT_AREA / 1000
+  const weightRow = row(null, '', labels['print.solidTip'])
+  const weightText = weightRow.lastChild
+  weightText.appendChild(document.createTextNode(`${closed ? '' : '≈ '}${number(cm3, 2)} cm³ · `))
+  const select = Object.assign(document.createElement('select'), { className: 'print-material' })
+  for (const name of Object.keys(MATERIALS)) select.appendChild(Object.assign(document.createElement('option'), { value: name, textContent: name, selected: name === material }))
+  select.addEventListener('change', () => { settings.printMaterial = select.value; store(); renderPrintPanel() })
+  weightText.appendChild(select)
+  weightText.appendChild(document.createTextNode(` ${number(grams, grams < 10 ? 1 : 0)} g · ${number(meters, 2)} m`))
+}
 
 let statusTimer = null
 function setStatus(text) {
@@ -1759,7 +2006,7 @@ function readStored() {
 
 function store() {
   try {
-    localStorage.setItem('scadsphere.settings', JSON.stringify({ colors: settings.colors, edges: settings.edges, grid: settings.grid, ortho: settings.ortho, bed: settings.bed, parts: settings.parts, transformRows: settings.transformRows, transformOrigin: settings.transformOrigin }))
+    localStorage.setItem('scadsphere.settings', JSON.stringify({ colors: settings.colors, edges: settings.edges, grid: settings.grid, ortho: settings.ortho, bed: settings.bed, parts: settings.parts, transformRows: settings.transformRows, transformOrigin: settings.transformOrigin, printAngle: settings.printAngle, printMaterial: settings.printMaterial }))
   } catch {
     // ohne Speicher eben nur für diese Sitzung
   }
@@ -2197,6 +2444,7 @@ function selectPart(name) {
 /** Ausgeblendete Teile (nach Namen) unsichtbar machen - die Datei bleibt, wie sie ist. */
 function applyHidden() {
   model?.traverse((child) => { if (child.isMesh) child.visible = !hiddenParts.has(child.name) })
+  refreshPrintCheck()
   requestRender()
 }
 
@@ -2544,7 +2792,7 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   select(hit?.object.name || null)
 })
 
-window.scadSphere = { setCaret, load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform }
+window.scadSphere = { setCaret, load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform, setPrint }
 
 if (init.theme) setTheme(init.theme)
 else scene.background = new Color('#f7f8fa')

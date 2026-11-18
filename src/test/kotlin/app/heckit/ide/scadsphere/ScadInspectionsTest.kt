@@ -101,4 +101,48 @@ class ScadInspectionsTest : BasePlatformTestCase() {
         "Extract module",
         "module shelf(w) {\n    part(w);\n}\n\nmodule part(w) {\n    cube([w, 20, 2]);\n    translate([0, 18, 0]) cube([w, 2, 10]);\n}\n",
     )
+
+    private fun applyParameterIntention(before: String, after: String) {
+        myFixture.configureByText(ScadFileType, before)
+        myFixture.launchAction(myFixture.findSingleIntention("Make Customizer parameter"))
+        assertEquals(after, myFixture.editor.document.text)
+    }
+
+    fun testMakeParameterAfterLastParameter() = applyParameterIntention(
+        "width = 40; // [10:100]\n\nmodule m() cylinder(h = <caret>12, r = 3);\nm();\n",
+        "width = 40; // [10:100]\ncylinder_h = 12; // [0:50]\n\nmodule m() cylinder(h = cylinder_h, r = 3);\nm();\n",
+    )
+
+    fun testMakeParameterAtTopWithVectorAndSign() {
+        applyParameterIntention(
+            "// Box\ninclude <x.scad>\ncube([20, <caret>1.5, 5]);\n",
+                "// Box\ninclude <x.scad>\nsize_y = 1.5; // [0:0.1:5]\n\ncube([20, size_y, 5]);\n",
+        )
+        applyParameterIntention(
+            "translate([0, 0, -<caret>10]) cube(1);\n",
+                "translate_z = -10; // [-20:20]\n\ntranslate([0, 0, translate_z]) cube(1);\n",
+        )
+    }
+
+    fun testMakeParameterCaretAfterNumber() = applyParameterIntention(
+        "cube([20, 5<caret>, 2]);\n",
+        "size_y = 5; // [0:10]\n\ncube([20, size_y, 2]);\n",
+    )
+
+    fun testMakeParameterNotOnParameterOrNamedValue() {
+        myFixture.configureByText(ScadFileType, "w = <caret>40;\ncube(w);\n")
+        assertEmpty(myFixture.filterAvailableIntentions("Make Customizer parameter"))
+    }
+
+    fun testMakeParameterAvoidsShadowedName() = applyParameterIntention(
+        "module m(cylinder_h) cylinder(h = <caret>12);\nm(1);\n",
+        "cylinder_h2 = 12; // [0:50]\n\nmodule m(cylinder_h) cylinder(h = cylinder_h2);\nm(1);\n",
+    )
+
+    fun testSliderRange() {
+        assertEquals("[0:20]", app.heckit.ide.scadsphere.lang.MakeCustomizerParameterIntention.sliderRange("10"))
+        assertEquals("[0:10]", app.heckit.ide.scadsphere.lang.MakeCustomizerParameterIntention.sliderRange("0"))
+        assertEquals("[0:0.01:0.5]", app.heckit.ide.scadsphere.lang.MakeCustomizerParameterIntention.sliderRange("0.25"))
+        assertEquals("[-200:200]", app.heckit.ide.scadsphere.lang.MakeCustomizerParameterIntention.sliderRange("-75"))
+    }
 }

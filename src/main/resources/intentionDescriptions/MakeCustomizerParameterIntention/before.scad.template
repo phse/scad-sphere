@@ -1,0 +1,3 @@
+width = 40; // [10:100]
+
+cylinder(h = <spot>12</spot>, r = 3);

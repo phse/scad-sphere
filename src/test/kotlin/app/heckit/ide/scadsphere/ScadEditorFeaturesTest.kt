@@ -80,4 +80,19 @@ class ScadEditorFeaturesTest : BasePlatformTestCase() {
         contributor.processElementsWithName("bracket", items, FindSymbolParameters.wrap("bracket", project, false))
         assertEquals("bracket(w)", (items.results.single() as PsiElement).let { (it as NavigationItem).presentation?.presentableText })
     }
+
+    fun testModuleGutterIcons() {
+        myFixture.configureByText(ScadFileType, "module a() cube(1);\nmodule b() {\n    module c() cube(1);\n    c();\n}\nfunction f() = 1;\n")
+        val tips = myFixture.findAllGutters().mapNotNull { it.tooltipText }.filter { it.startsWith("Show") }.sorted()
+        assertEquals(listOf("Show only module 'a' in the preview", "Show only module 'b' in the preview"), tips)
+        myFixture.file.virtualFile.putUserData(app.heckit.ide.scadsphere.editor.ScadPreviewEditor.FOCUS_MODULE, "b")
+        try {
+            myFixture.configureByText(ScadFileType, myFixture.file.text + " ")
+            myFixture.file.virtualFile.putUserData(app.heckit.ide.scadsphere.editor.ScadPreviewEditor.FOCUS_MODULE, "b")
+            val again = myFixture.findAllGutters().mapNotNull { it.tooltipText }.filter { it.startsWith("Show") }.sorted()
+            assertEquals(listOf("Show only module 'a' in the preview", "Show the whole file in the preview again"), again)
+        } finally {
+            myFixture.file.virtualFile.putUserData(app.heckit.ide.scadsphere.editor.ScadPreviewEditor.FOCUS_MODULE, null)
+        }
+    }
 }

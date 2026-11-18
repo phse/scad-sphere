@@ -57,12 +57,38 @@ class ScadInlayParameterHintsProvider : InlayHintsProvider {
         return hints
     }
 
-    private fun parameterNames(reference: ScadReference?, builtin: ScadBuiltins.Builtin?): List<String> {
-        val declaration = reference?.multiResolve(false)?.firstNotNullOfOrNull { it.element as? ScadCallableDeclaration }
-        if (declaration != null) return declaration.parameters.map { it.name ?: return emptyList() }
-        // `r = 1 | d`: Position zählt nur für die erste Alternative
-        return builtin?.params?.map { it.substringBefore('|').substringBefore('=').trim() }
-            ?.takeWhile { it.isNotEmpty() && !it.contains('…') }.orEmpty()
+    companion object {
+        /** Parameternamen des aufgerufenen Moduls bzw. der Funktion in ihrer Reihenfolge (eigene oder eingebaute). */
+        fun parameterNames(reference: ScadReference?, builtin: ScadBuiltins.Builtin?): List<String> {
+            val declaration = reference?.multiResolve(false)?.firstNotNullOfOrNull { it.element as? ScadCallableDeclaration }
+            if (declaration != null) return declaration.parameters.map { it.name ?: return emptyList() }
+            // `r = 1 | d`: Position zählt nur für die erste Alternative
+            return builtin?.params?.map { it.substringBefore('|').substringBefore('=').trim() }
+                ?.takeWhile { it.isNotEmpty() && !it.contains('…') }.orEmpty()
+        }
+
+        /** Name und Parametername, an den [argument] geht (benannt oder nach Position), sonst null. */
+        fun calleeAndParameter(argument: ScadArgument): Pair<String, String?>? {
+            val owner = argument.parent?.parent
+            val (callee, arguments, names) = when (owner) {
+                is ScadModuleCall -> Triple(
+                    owner.moduleName ?: return null, owner.arguments,
+                    lazy { parameterNames(owner.reference as? ScadReference, owner.moduleName?.let { ScadBuiltins.module(it) }) },
+                )
+                is ScadCallExpression -> {
+                    val reference = owner.callee as? ScadReferenceExpression ?: return null
+                    Triple(
+                        reference.text, owner.argumentList?.children?.filterIsInstance<ScadArgument>().orEmpty(),
+                        lazy { parameterNames(reference.reference as? ScadReference, ScadBuiltins.function(reference.text)) },
+                    )
+                }
+                else -> return null
+            }
+            argument.argumentName?.let { return callee to it.text }
+            val index = arguments.indexOf(argument)
+            if (index < 0 || arguments.take(index).any { it.argumentName != null }) return callee to null
+            return callee to names.value.getOrNull(index)
+        }
     }
 
     private fun isLiteral(value: PsiElement): Boolean = when (value.node.elementType) {

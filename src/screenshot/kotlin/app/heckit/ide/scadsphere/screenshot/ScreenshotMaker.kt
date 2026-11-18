@@ -28,7 +28,7 @@ import javax.swing.JFrame
  * Erzeugt Screenshots in der Sandbox-IDE (./gradlew runIde -Pscreenshots=...). Zeichnet den Frame selbst in ein
  * Bild, braucht also keine Bildschirmaufnahme-Rechte. Welche Dateien, steht in marketplace/screenshots.txt
  * (bzw. `screenshots.txt` im Projekt bei -PscreenshotProject), je Zeile
- * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:[angle:|diameter:]x,y,z;x,y,z] [up:y] [select:teil] [transform] [caret:text]` (`set:` ändert
+ * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:[angle:|diameter:]x,y,z;x,y,z] [up:y] [select:teil] [transform] [caret:text] [module:name] [print] [view:below]` (`set:` ändert
  * Customizer-Werte, `export:` nimmt zusätzlich den Export-Dialog für das Format auf, als `bildname-dialog.png`).
  * Ist nur in Builds mit -Pscreenshots enthalten.
  */
@@ -124,6 +124,24 @@ object ScreenshotMaker {
                     if ("transform" in words) editor?.invokeViewer("openTransform", listOf("origin", "move", "rotate", "scale"))
                 }
                 Thread.sleep(800)
+            }
+            // module:name zeigt nur dieses Modul (wie das Symbol am Zeilenrand), print öffnet die Druckprüfung, view:… die Ansicht
+            words.firstOrNull { it.startsWith("module:") }?.removePrefix("module:")?.let { module ->
+                edt { FileEditorManager.getInstance(project).getEditors(file).filterIsInstance<ScadSplitEditor>().firstOrNull()?.preview?.showModule(module) }
+                Thread.sleep(8000)
+            }
+            val view = words.firstOrNull { it.startsWith("view:") }?.removePrefix("view:")
+            if ("print" in words || view != null) {
+                edt {
+                    val editors = FileEditorManager.getInstance(project).getEditors(file)
+                    val invoke: (String, Any?) -> Unit = { function, argument ->
+                        editors.filterIsInstance<ScadSplitEditor>().firstOrNull()?.preview?.invokeViewer(function, argument)
+                            ?: editors.filterIsInstance<app.heckit.ide.scadsphere.editor.ModelFileEditor>().firstOrNull()?.invokeViewer(function, argument)
+                    }
+                    if ("print" in words) invoke("setPrint", true)
+                    view?.let { invoke("fit", it) }
+                }
+                Thread.sleep(1500)
             }
             // caret:text setzt die Schreibmarke auf das erste Vorkommen von text (hebt den Aufruf in der Vorschau hervor)
             words.firstOrNull { it.startsWith("caret:") }?.removePrefix("caret:")?.let { needle ->
