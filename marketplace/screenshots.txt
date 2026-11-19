@@ -8,4 +8,5 @@
 07-print: wall-hook.scad nocustomizer print view:below
 08-module: phone-stand.scad nocustomizer module:back_rest
 09-highlight-dark: shelf-bracket.scad dark nocustomizer measure:40,0,0;40,0,40
-10-parts: dresser.obj up:y select:top transform
+10-measure-ring: mounting-plate.scad nocustomizer preview measure:hole:30,9.59,7.41
+11-parts: dresser.obj up:y select:top transform

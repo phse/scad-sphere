@@ -1553,6 +1553,12 @@ function updateMeasureLabel() {
   measureLabel.style.left = `${((middle.x + 1) / 2) * rect.width}px`
   measureLabel.style.top = `${((1 - middle.y) / 2) * rect.height}px`
   measureLabel.hidden = middle.z > 1
+  // Seitliches Schild, das rechts über den Rand ragt: nach links schieben, bis es passt
+  if (!measureLabel.hidden && measureLabel.classList.contains('side')) {
+    const box = measureLabel.getBoundingClientRect()
+    const overflow = box.right - (rect.left + rect.width - 8)
+    if (overflow > 0) measureLabel.style.left = `${parseFloat(measureLabel.style.left) - overflow}px`
+  }
 }
 
 // --- Loch oder Zapfen mit einem Klick: zusammenhängende, glatt gekrümmte Wand um den Treffer, darauf ein Zylinder ---
