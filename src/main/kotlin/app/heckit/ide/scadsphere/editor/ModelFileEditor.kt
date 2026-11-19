@@ -53,7 +53,7 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
- * .stl, .3mf, .obj, .off und .amf: die 3D-Ansicht, darüber Umwandeln und „Neue .scad-Datei“. Ändert sich die Datei
+ * .stl, .3mf, .obj, .off, .amf (dazu .gltf, .glb und .ply nur zum Ansehen): die 3D-Ansicht, darüber Umwandeln und „Neue .scad-Datei“. Ändert sich die Datei
  * (z. B. neu exportiert), wird sie neu geladen.
  */
 class ModelFileEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(), FileEditor, DocumentReferenceProvider {
@@ -144,6 +144,15 @@ class ModelFileEditor(private val project: Project, private val file: VirtualFil
                         }.onFailure { thisLogger().info("Farben aus ${file.path} nicht lesbar", it) }.getOrNull()
                         currentPalette = palette
                         viewer.setPalette(palette)
+                    }
+                    "gltf", "glb" -> {
+                        // Puffer und Texturen liegen bei .gltf meist als eigene Dateien daneben
+                        val dir = file.parent
+                        viewer.showModel(bytes, format, keepCamera && loaded, siblings = { name ->
+                            dir?.findFileByRelativePath(name)?.takeIf { !it.isDirectory }?.let { runCatching { it.contentsToByteArray(false) }.getOrNull() }
+                        })
+                        currentPalette = null
+                        viewer.setPalette(null)
                     }
                     else -> {
                         viewer.showModel(bytes, format, keepCamera && loaded)
@@ -237,7 +246,8 @@ class ViewerUndoPromoter : ActionPromoter {
 }
 
 class ModelFileEditorProvider : FileEditorProvider, DumbAware {
-    override fun accept(project: Project, file: VirtualFile): Boolean = file.extension?.lowercase() in ExportFormat.MODEL_EXTENSIONS
+    override fun accept(project: Project, file: VirtualFile): Boolean =
+        file.extension?.lowercase().let { it in ExportFormat.MODEL_EXTENSIONS || it in ExportFormat.VIEW_ONLY_EXTENSIONS }
     override fun acceptRequiresReadAction(): Boolean = false
     override fun createEditor(project: Project, file: VirtualFile): FileEditor = ModelFileEditor(project, file)
     override fun getEditorTypeId(): String = "scadsphere-model"

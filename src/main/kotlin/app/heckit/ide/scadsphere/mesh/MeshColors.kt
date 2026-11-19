@@ -179,8 +179,13 @@ object ObjColors {
  */
 object ThreeMfColors {
     /** Projektdateien von Bambu Studio/OrcaSlicer: Farben kommen dort aus den Filamenten des Projekts. */
-    fun isSlicerProject(bytes: ByteArray): Boolean = entries(bytes).keys.any {
-        it.equals("Metadata/project_settings.config", ignoreCase = true) || it.equals("Metadata/model_settings.config", ignoreCase = true)
+    fun isSlicerProject(bytes: ByteArray): Boolean {
+        val all = entries(bytes)
+        if (all.keys.any { it.equals("Metadata/project_settings.config", ignoreCase = true) }) return true
+        if (all.keys.none { it.equals("Metadata/model_settings.config", ignoreCase = true) }) return false
+        // Eigene Mehrfarb-3MF (Export für den Mehrfarbdruck) hat nur die Teile-Einstellungen, ist aber kein Slicer-Projekt
+        val model = all.entries.firstOrNull { it.key.lowercase().endsWith(".model") }?.value?.toString(Charsets.UTF_8) ?: return true
+        return !Regex("""<metadata\s+name="Application"\s*>\s*SCAD Sphere""").containsMatchIn(model)
     }
 
     fun palette(bytes: ByteArray, slicerHint: String?): Palette {

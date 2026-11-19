@@ -67,6 +67,10 @@ class ExportGroup : ActionGroup(ScadSphereBundle.messagePointer("action.export")
         formats.forEachIndexed { index, format ->
             if (index > 0 && formats[index - 1].is3d != format.is3d) actions += Separator.getInstance()
             actions += EXPORT_ACTIONS.getValue(format)
+            // Hinter den 3D-Formaten: 3MF für den Mehrfarbdruck (ein Objekt, ein Teil je Farbe bzw. Wert)
+            if (format.is3d && formats.getOrNull(index + 1)?.is3d != true) {
+                ActionManager.getInstance().getAction("ScadSphere.ExportMultiColor")?.let { actions += Separator.getInstance(); actions += it }
+            }
         }
         return actions.toTypedArray()
     }

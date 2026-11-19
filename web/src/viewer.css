@@ -550,3 +550,9 @@ html, body {
 .print-material {
   padding: 0 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit;
 }
+
+/* Loch/Zapfen: Schild rechts neben dem Kreis statt darüber */
+.measure-label.side { transform: translate(10px, -50%); text-align: left; }
+.parts-undo.on { color: var(--active); background: var(--hover); }
+/* Hinweis „Fläche aufs Bett“ oben, unten liegt das Transformieren-Feld */
+.measure-hint.top { top: 46px; bottom: auto; }

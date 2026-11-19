@@ -107,6 +107,7 @@ class ModelViewer(parent: Disposable) : Disposable {
         mtl: Map<String, ByteArray> = emptyMap(),
         siblings: ((String) -> ByteArray?)? = null,
     ) {
+        shownFormat = format
         val number = modelCounter.incrementAndGet()
         val id = "$number.$format"
         val overlayId = "$number-overlay.3mf"
@@ -123,7 +124,7 @@ class ModelViewer(parent: Disposable) : Disposable {
             "mtl" to mtl.keys.map { "${ViewerResources.ORIGIN}/model/$number/files/${encodePath(it)}" },
             "resourceBase" to "${ViewerResources.ORIGIN}/model/$number/files/",
             "fileKey" to fileKey,
-            "up" to fileKey?.let { PropertiesComponent.getInstance().getValue(UP_KEY + it, "z") },
+            "up" to fileKey?.let { PropertiesComponent.getInstance().getValue(UP_KEY + it, defaultUp(format)) },
         ))
     }
 
@@ -138,6 +139,10 @@ class ModelViewer(parent: Disposable) : Disposable {
     /** Kennung der Datei (Pfad): Darunter merkt sich die IDE die Achse oben (`PropertiesComponent`). */
     @Volatile
     var fileKey: String? = null
+
+    /** Format des zuletzt gezeigten Modells (Standard der Achse oben) */
+    @Volatile
+    private var shownFormat: String? = null
 
     @Volatile
     private var siblingFiles: Pair<String, (String) -> ByteArray?>? = null
@@ -246,7 +251,7 @@ class ModelViewer(parent: Disposable) : Disposable {
                 onTransform?.invoke(message.get("part")?.takeIf { !it.isJsonNull }?.asString, matrix.toDoubleArray())
             }
             "up" -> message.get("value")?.asString?.let { value ->
-                fileKey?.let { PropertiesComponent.getInstance().setValue(UP_KEY + it, value, "z") }
+                fileKey?.let { PropertiesComponent.getInstance().setValue(UP_KEY + it, value, defaultUp(shownFormat)) }
             }
             "undo" -> onUndo?.invoke(message.get("redo")?.asBoolean == true)
             "error" -> thisLogger().warn("Viewer: ${message.get("message")}")
@@ -271,13 +276,13 @@ class ModelViewer(parent: Disposable) : Disposable {
     private fun labels(): Map<String, String> = listOf(
         "tool.fit", "tool.iso", "tool.top", "tool.front", "tool.right", "tool.colors", "tool.colors.none", "tool.edges", "tool.ortho", "tool.grid",
         "tool.render", "tool.stop", "tool.customizer", "tool.customizer.none",
-        "messages.error", "messages.warning", "messages.echo", "triangles", "parseError", "noWebGl",
-        "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.measureDistance", "tool.measureAngle", "tool.measureDiameter", "measure.collinear", "tool.section", "tool.section.none",
+        "messages.error", "messages.warning", "messages.echo", "triangles", "points", "parseError", "noWebGl",
+        "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.measureDistance", "tool.measureAngle", "tool.measureDiameter", "tool.measureHole", "measure.holeHint", "measure.noHole", "measure.hole", "measure.pin", "measure.length", "measure.cone", "measure.sphere", "measure.sphereHole", "measure.circumference", "measure.torus", "measure.torusGroove", "measure.outerInner", "measure.tube", "measure.centerline", "tool.measureArea", "measure.areaHint", "measure.perimeter", "measure.areaCount", "measure.planar", "measure.cylinderWall", "measure.coneWall", "measure.sphereWall", "measure.torusWall", "measure.collinear", "tool.section", "tool.section.none",
         "tool.print", "tool.print.none", "print.title", "print.overhang", "print.overhangTip", "print.none", "print.contact", "print.contactTip", "print.closed", "print.open", "print.nonManifold", "print.openTip", "print.solidTip",
         "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
         "tool.image", "tool.image.none", "animation.play", "animation.pause", "animation.steps", "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
         "tool.parts", "tool.parts.none", "parts.title", "parts.pick", "parts.separate", "parts.empty", "parts.create", "parts.count",
-        "parts.selected", "parts.renameTip", "parts.hideTip", "parts.deleteTip", "parts.assignTip", "parts.hideAllTip", "parts.search", "parts.noMaterial", "close", "parts.whole", "parts.separateTip", "tool.transform", "transform.title", "transform.move", "transform.rotate", "transform.scale", "transform.rel", "transform.abs", "transform.apply", "transform.absHint.rotate", "transform.absHint.scale", "transform.sync", "transform.origin", "transform.origin.x", "transform.origin.y", "transform.origin.z", "transform.originTip.x", "transform.originTip.y", "transform.originTip.z", "transform.noAbsRotation", "tool.up", "tool.upZ", "tool.upY", "tool.upX",
+        "parts.selected", "parts.renameTip", "parts.hideTip", "parts.deleteTip", "parts.assignTip", "parts.hideAllTip", "parts.search", "parts.noMaterial", "close", "parts.whole", "parts.separateTip", "tool.transform", "transform.title", "transform.move", "transform.rotate", "transform.scale", "transform.rel", "transform.abs", "transform.apply", "transform.absHint.rotate", "transform.absHint.scale", "transform.sync", "transform.origin", "transform.origin.x", "transform.origin.y", "transform.origin.z", "transform.originTip.x", "transform.originTip.y", "transform.originTip.z", "transform.noAbsRotation", "transform.layFlatTip", "transform.layFlatHint", "transform.layFlatDone", "transform.layFlatAlready", "tool.up", "tool.upZ", "tool.upY", "tool.upX",
     ).associateWith { ScadSphereBundle.message("viewer.$it") }
 
     private fun applyTheme() {
@@ -323,6 +328,9 @@ class ModelViewer(parent: Disposable) : Disposable {
 }
 
 private const val UP_KEY = "scadsphere.upAxis."
+
+/** Achse oben, solange der Nutzer nichts gewählt hat: glTF ist laut Spezifikation Y-oben, alles andere Z. */
+private fun defaultUp(format: String?) = if (format == "gltf" || format == "glb") "y" else "z"
 
 /** Chromiums Kontextmenü (Zurück, Neu laden, …) hat im Viewer nichts verloren. */
 private object NoContextMenu : CefContextMenuHandlerAdapter() {

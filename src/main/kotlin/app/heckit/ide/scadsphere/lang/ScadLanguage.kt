@@ -24,7 +24,7 @@ object ScadFileType : LanguageFileType(ScadLanguage) {
     override fun getIcon(): Icon = ScadIcons.SCAD
 }
 
-/** 3D-Modelle (STL, 3MF, OBJ, OFF, AMF) - nur für den 3D-Viewer, kein Texteditor. */
+/** 3D-Modelle (STL, 3MF, OBJ, OFF, AMF, glTF, PLY) - nur für den 3D-Viewer, kein Texteditor. */
 abstract class ModelFileType(
     private val id: String,
     private val displayName: String,
@@ -54,6 +54,12 @@ object OffFileType : ModelFileType("heckit.OFF", "OFF", "off", "filetype.off.des
 
 /** Additive Manufacturing File Format (XML, auch gezippt). */
 object AmfFileType : ModelFileType("heckit.AMF", "AMF", "amf", "filetype.amf.description")
+
+/** glTF 2.0 (`.gltf` als JSON mit Puffern daneben, `.glb` binär) - nur ansehen, OpenSCAD liest es nicht. */
+object GltfFileType : ModelFileType("heckit.GLTF", "glTF", "gltf", "filetype.gltf.description")
+
+/** Polygon File Format (Text oder binär, oft aus 3D-Scannern) - nur ansehen. */
+object PlyFileType : ModelFileType("heckit.PLY", "PLY", "ply", "filetype.ply.description")
 
 object ScadIcons {
     @JvmField

@@ -96,6 +96,19 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.7.0</h3>
+            <ul>
+              <li>Export a 3MF for multi-color print: one object with a part per color() or per value of a Customizer
+                  parameter, each with its filament. Bambu Studio and OrcaSlicer load it as one object with these parts
+                  and the filaments assigned.</li>
+              <li>Measure round shapes with one click: holes and pins (diameter, length, circumference), cones (both diameters,
+                  angle - e.g. a countersink), spheres and rings (outer and inner diameter, tube, centerline - also rounded
+                  edges and grooves), also when clicking next to the rim of a hole.</li>
+              <li>Measure the area and perimeter of a face or a round wall; Shift+click adds more faces.</li>
+              <li>Lay face on bed: click a face and the model or the selected part is turned so that it lies at the bottom
+                  (shown as a short animation).</li>
+              <li>glTF/GLB and PLY files (also point clouds) open in the viewer, with print check and measuring.</li>
+            </ul>
             <h3>1.6.0</h3>
             <ul>
               <li>Print check in the viewer: overhangs that need supports in red (angle adjustable), the area lying on the

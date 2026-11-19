@@ -120,6 +120,19 @@ loop or `let` it lives in).
   options are detected from `openscad --help` and `--help-export` and the last choice is remembered.
 - **All parameter sets**: if the file has parameter sets, the dialog offers to export all of them, one file per set
   (`<name>-<set>.<ext>`). OpenSCAD reads the sets itself (`-p <file>.json -P <set>`); *Export Again* repeats it.
+- **3MF for Multi-Color Print…** (last 3D entry of *Export ▸*): one object made of several parts, each with its
+  filament, so Bambu Studio and OrcaSlicer load it like two STLs loaded "as one object with multiple parts", with the
+  filaments already assigned (PrusaSlicer loads the parts without filaments).
+  - *One part per color*: OpenSCAD writes the CSG tree (`-o tree.csg`), and for every color a tree with only its
+    parts is rendered into a closed solid. As in OpenSCAD the outer `color()` wins; in a `difference()` the first child
+    decides and everything else is still subtracted; `hull()`, `intersection()`, extrusions and the like stay whole in
+    their color. Parts without `color()` form one more part. Filaments 1, 2, 3, … in the order the colors appear.
+  - *One part per value of a parameter*: a Customizer parameter with a drop-down (`part = "body"; // [body, label]`),
+    one OpenSCAD run per checked value with its filament number.
+  - The file has one mesh object per part and an object joining them with `<components>`; part names and filaments
+    are in `Metadata/model_settings.config`. It has no colors on purpose: Bambu Studio turns the colors of a 3MF from
+    another program into a colored surface and drops the filaments of the parts. Checked with Bambu Studio 2.09
+    (`--export-3mf`). The choice is remembered per file.
 - **Open in Slicer** (editor toolbar, project tree, model viewer): exports a 3MF with colors and the Customizer values
   to a temporary folder and opens it in Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura (the first one found,
   or the one set in the settings). `.stl`, `.3mf`, `.obj` and `.amf` files are opened directly.
@@ -127,7 +140,8 @@ loop or `let` it lives in).
   running one ignores new arguments).
 - *Export Again* (first entry, also bindable to a shortcut) exports to the last target without asking.
 
-**Viewer** (`.stl` binary and ASCII, `.3mf`, `.obj`, `.off`, `.amf`; also used for the preview)
+**Viewer** (`.stl` binary and ASCII, `.3mf`, `.obj`, `.off`, `.amf`, and for viewing only `.gltf`/`.glb` and `.ply`;
+also used for the preview)
 
 - Rotate with the left mouse button, pan with the right one, zoom with the wheel (towards the cursor).
 - Toolbar: fit, *Views* (isometric, top, bottom, front, right, left, back), *Display* (colors or one color, edges,
@@ -138,13 +152,25 @@ loop or `let` it lives in).
 - **Measure** (menu of the ruler button): *Distance* between two points with Δx/Δy/Δz, *Angle* at the second of three
   points with the length of both legs, *Diameter* of the circle through three points, e.g. on the edge of a hole
   (with the radius; the circle is drawn). Corners snap within 12 px, so the corners of a `$fn` polygon give the exact
-  diameter. Esc clears the measurement.
+  diameter. *Round shape* takes one click on a hole, pin, cone, sphere or ring (or on the flat face next to the rim of a
+  hole, e.g. seen from the top). The smooth wall around the click is collected; a cylinder or cone has an axis at the
+  same angle to all face normals, a sphere has all corners at one distance from its center, a ring (torus) all corners
+  at one distance from a circle. The shape is first fitted to the faces next to the click, then to all faces lying on
+  it - so the round end of a slot measures as that end and a countersink stops at the hole below. Shows for a cylinder
+  the diameter, hole or pin, radius, length along the axis and circumference; for a cone both diameters, the included
+  angle (e.g. 90° for a countersink), the length and both circumferences; for a sphere the diameter (hollow or solid)
+  and circumference; for a ring the outer and inner diameter, the diameter of the tube and the centerline (diameter and
+  length) - also for a rounded edge (part of a ring) or a groove. Draws the rims or the outline. Flat faces and other
+  shapes give no result. *Area* takes a click on a face: a flat face (all neighbors in the same plane) or, on a round
+  wall, the whole wall; shows the area and the perimeter (all edges at the rim of the selection) and highlights it.
+  Shift+click adds more faces or removes them again. Esc clears the measurement.
 - **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled and hatched.
 - **Print check** (nozzle button): faces pointing down more steeply than the overhang angle (45° by default, adjustable)
   in red with their area - they need supports; faces lying on the bed in green with their area; open edges and edges
   shared by more than two faces drawn in red, also through the model; volume, weight and length of 1.75 mm filament for
   a solid print, with the density of PLA, PETG, ABS, ASA, TPU, PA or PC. Edges are counted over the whole model, so parts
-  that share an edge show up as edges with more than two faces; hidden parts are left out; angle and material are remembered.
+  that share an edge show up as edges with more than two faces, and the underside of a part resting on another one (an
+  inlay in a pocket) counts as overhang; hidden parts are left out; angle and material are remembered.
 - **Animation**: files that use `$t` get a bar with play, a slider and the number of steps. Each step is one OpenSCAD run
   with `-D $t=…`; computed steps are kept until the code, the Customizer or an included file changes.
 - **Parts** (OBJ, 3MF, AMF): the parts grouped by material or color, with show/hide per part or material and a
@@ -156,13 +182,20 @@ loop or `let` it lives in).
 - **Transform** (OBJ, 3MF, AMF, STL, OFF): move, rotate and scale the selected part or the whole model - relative or
   absolute, per axis or uniformly - around an origin chosen per axis (min, center, max); rows can be shown or hidden.
   The axes are those of the file (with Y up, Y is the height). OBJ vertices shared with other parts are copied; 3MF
-  changes the build item transform.
+  changes the build item transform. **Lay face on bed** (button in the header of the panel, then click a face in the
+  view): the selected part or the whole model is turned around its center until that face points down; the lowest
+  point stays at its height. With a part selected, a click on another part selects that one and turns it. The turn
+  is shown as a short animation, a note at the top says by how many degrees. Esc cancels.
 - **Merge With...** (toolbar above the model): appends another OBJ or 3MF file.
 - Every edit is written to the file and can be undone with ⌘Z / Ctrl+Z in the view.
 - **Up axis** per file: Z (OpenSCAD, slicers), Y (Blender, Sweet Home 3D, many OBJ files) or X; remembered by the IDE.
 - **.mtl files** open as text with highlighting, color swatches (color picker in the gutter) and folding per material;
   the 3D view of the `.obj` follows while you type.
-- Size of the model in mm (bounding box) and the number of triangles at the bottom left.
+- Size of the model in mm (bounding box) and the number of triangles (points for a point cloud) at the bottom left.
+- **glTF/GLB and PLY** are shown as they are, with the print check and measuring but without parts list, transform or
+  converting (OpenSCAD cannot import them). glTF: colors and textures, buffers and images next to the `.gltf` are
+  loaded, Y is up unless changed; Draco or KTX2 compressed files are not supported. PLY: text or binary, colors per
+  vertex, a file without faces is shown as a point cloud.
 - Files reload when they change on disk (e.g. after an export).
 - **Convert To ▸** (toolbar above the model, project tree, also for several files): OpenSCAD imports the model and
   writes 3MF, STL, OBJ, OFF or AMF next to it. **New .scad File from Model** creates a file with `import("model.stl");`
@@ -248,7 +281,7 @@ The Marketplace description lives in `src/main/resources/META-INF/plugin.xml`, t
 
 Copies `marketplace/demo-project` to `/Users/Shared/scad-demo` (so no user path shows up in the images), opens it in
 the sandbox and writes the PNGs listed in `marketplace/screenshots.txt` (file, theme, layout, `nocustomizer`,
-Customizer values as `set:name=value`, a section as `section:x:0.5[:flip]`, a measurement as `measure:[angle:|diameter:]x,y,z;x,y,z`, the caret as `caret:text` per line). The IDE
+Customizer values as `set:name=value`, a section as `section:x:0.5[:flip]`, a measurement as `measure:[angle:|diameter:|hole:]x,y,z;x,y,z` (for `hole:` the point is clicked from the current view), the print check as `print`, a view as `view:below`, a single module as `module:name`, the caret as `caret:text` per line). The IDE
 paints its own window for this, no screen recording permission is needed. OpenSCAD must be installed for the
 preview. The helper lives in `src/screenshot/` and is only compiled with `-Pscreenshots`, never into a release.
 Close any running sandbox first, and close the sandbox afterwards. `-PscreenshotProject=<folder>` uses another
@@ -270,6 +303,7 @@ project with its own `screenshots.txt`.
 | `lang/ScadInspections.kt`, `ScadIntentions.kt` | Inspections with their quick fixes; create declaration, toggle `#`, inline variable, extract module |
 | `render/EchoLines.kt`, `lang/ScadEchoLinePainter.kt` | Line markers inside `echo(…)` for the preview run, and the values at the end of the line |
 | `lang/ScadModuleLineMarker.kt` | Gutter icon to show a single module in the preview |
+| `render/ColorParts.kt`, `export/MultiPart3mf.kt`, `export/MultiColorExport.kt` | Multi-color 3MF: split the CSG tree by color, read OpenSCAD's 3MF, write one object with parts and filaments, the dialog |
 | `render/MeshStats.kt` | Bounding box, triangles, volume and surface of an STL (for the MCP tools) |
 | `mcp/ScadToolset.kt` | MCP tools `scad_render`, `scad_parameters`, `scad_export`; only loaded with the IDE's MCP server plugin (`META-INF/scadsphere-mcp.xml`) |
 | `render/Slicer.kt` | Finding installed slicers and opening a file in them |

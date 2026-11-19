@@ -43,11 +43,11 @@
   <li>The call at the caret is highlighted in the model, also parts subtracted in a <code>difference()</code> - without changing the file.</li>
   <li>Show a single module: an icon next to every module renders only this one, also in library files that draw nothing themselves.</li>
   <li>Print bed outline (size and origin configurable, presets for common printers) and a warning when the model does not fit.</li>
-  <li>Measure distances, angles and diameters of holes (snaps to corners) and a hatched section view along X, Y or Z.</li>
+  <li>Measure distances, angles and diameters (snaps to corners), holes, pins, cones, spheres and rings with one click, areas and perimeters of faces, and a hatched section view along X, Y or Z.</li>
   <li><b>Print check</b>: overhangs that need supports in red (angle adjustable), the area lying on the bed, open edges,
       volume, weight and filament length for PLA, PETG, ABS and more.</li>
   <li>Animation of <code>$t</code> with play and slider; save the current view as PNG.</li>
-  <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change.
+  <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change; .gltf, .glb and .ply files (also point clouds) for viewing.
       Convert them to another format (also several at once), or start a new .scad file that imports them.</li>
   <li>Choose the up axis per file (Z, Y or X), e.g. Y for models from Blender or Sweet Home 3D.</li>
 </ul>
@@ -59,7 +59,7 @@
       3MF colors to <code>basematerials</code> and color groups, AMF colors to materials and objects.</li>
   <li>Rename and delete parts, give a part a material of its own or assign it to another one (also by drag and drop).</li>
   <li>Move, rotate and scale a part or the whole model - relative or absolute, per axis or uniformly, around a chosen
-      origin (corner, edge or center). Works for STL (binary and ASCII), OFF, OBJ, 3MF and AMF.</li>
+      origin (corner, edge or center), or click a face to lay it on the bed. Works for STL (binary and ASCII), OFF, OBJ, 3MF and AMF.</li>
   <li>Merge two OBJ or two 3MF files into one.</li>
   <li>Every change is written to the file and can be undone with Undo (⌘Z / Ctrl+Z) in the view.</li>
   <li><b>.mtl</b> files: highlighting, color swatches with a color picker and folding per material; the 3D view of the
@@ -79,6 +79,8 @@
   <li>3MF, STL (binary or ASCII), OBJ, OFF, AMF, SVG, DXF and PDF, with the options your OpenSCAD version offers
       (colors and unit of a 3MF, paper size of a PDF) and the Customizer values.</li>
   <li>Export all parameter sets at once, one file per set.</li>
+  <li><b>3MF for multi-color print</b>: one object with a part per color() or per value of a parameter, each with its filament -
+      Bambu Studio and OrcaSlicer load it ready for the AMS or a second nozzle.</li>
   <li>Export Again to the last file with one click, or open the file in OpenSCAD with the Customizer values.</li>
   <li>Open in Slicer: Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura get a 3MF with colors and the Customizer values.</li>
 </ul>
@@ -119,6 +121,8 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <fileType name="heckit.OBJ" implementationClass="app.heckit.ide.scadsphere.lang.ObjFileType" fieldName="INSTANCE" extensions="obj"/>
         <fileType name="heckit.OFF" implementationClass="app.heckit.ide.scadsphere.lang.OffFileType" fieldName="INSTANCE" extensions="off"/>
         <fileType name="heckit.AMF" implementationClass="app.heckit.ide.scadsphere.lang.AmfFileType" fieldName="INSTANCE" extensions="amf"/>
+        <fileType name="heckit.GLTF" implementationClass="app.heckit.ide.scadsphere.lang.GltfFileType" fieldName="INSTANCE" extensions="gltf;glb"/>
+        <fileType name="heckit.PLY" implementationClass="app.heckit.ide.scadsphere.lang.PlyFileType" fieldName="INSTANCE" extensions="ply"/>
 
         <fileType name="heckit.MTL" language="heckit.MTL" implementationClass="app.heckit.ide.scadsphere.lang.MtlFileType"
                   fieldName="INSTANCE" extensions="mtl"/>
@@ -209,6 +213,7 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
         <action id="ScadSphere.Render" class="app.heckit.ide.scadsphere.editor.RenderAction"/>
         <action id="ScadSphere.StopRender" class="app.heckit.ide.scadsphere.editor.StopRenderAction"/>
         <action id="ScadSphere.ExportAgain" class="app.heckit.ide.scadsphere.export.ExportAgainAction"/>
+        <action id="ScadSphere.ExportMultiColor" class="app.heckit.ide.scadsphere.export.MultiColorExportAction"/>
         <action id="ScadSphere.ToggleCustomizer" class="app.heckit.ide.scadsphere.customizer.ToggleCustomizerAction"/>
         <group id="ScadSphere.FileActions">
             <group id="ScadSphere.Export" class="app.heckit.ide.scadsphere.export.ExportGroup" popup="true"/>

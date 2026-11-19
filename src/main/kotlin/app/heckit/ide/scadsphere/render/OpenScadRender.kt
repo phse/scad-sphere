@@ -260,6 +260,13 @@ class OpenScadRender(private val exe: String) {
         return exportRun(command(source, null, target, null, options.arguments()), "import(\"$path\");\n", source, target, indicator)
     }
 
+    /**
+     * SCAD- bzw. CSG-Text [source] über stdin nach [target] rechnen, im Ordner von [file] (relative `import()`-Pfade,
+     * Bibliotheken). Für Teile, die aus dem CSG-Baum gebaut werden (Mehrfarbdruck).
+     */
+    fun exportSource(file: File, source: String, target: File, indicator: ProgressIndicator): ExportResult =
+        exportRun(command(file, null, target, null), source, file, target, indicator)
+
     private fun exportRun(command: GeneralCommandLine, input: String?, file: File, target: File, indicator: ProgressIndicator): ExportResult {
         // Ein altes Ziel darf nicht als Erfolg durchgehen, wenn OpenSCAD abbricht
         if (target.isFile) FileUtil.delete(target)

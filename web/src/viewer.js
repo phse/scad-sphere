@@ -3,7 +3,7 @@
 import './passiveWheel.js'
 import {
   AmbientLight, BackSide, Box3, BufferGeometry, Color, DirectionalLight, DoubleSide, EdgesGeometry, Float32BufferAttribute,
-  FrontSide, GridHelper, Group, Line, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial, MeshPhongMaterial, Object3D,
+  FrontSide, GridHelper, Group, Line, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial, MeshPhongMaterial, Object3D, Points, PointsMaterial,
   OrthographicCamera, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, Scene, ShapeGeometry, ShapePath, Sphere, SphereGeometry,
   Vector2, Vector3, WebGLRenderer, Euler, Matrix4, Quaternion,
 } from 'three'
@@ -13,6 +13,8 @@ import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js'
 import { AMFLoader } from 'three/addons/loaders/AMFLoader.js'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js'
 import { parseOff } from './offLoader.js'
 
 // OpenSCAD und Slicer denken mit Z nach oben.
@@ -91,6 +93,7 @@ let loadId = 0
 let overlay = null      // Teile mit # (hervorgehoben) und % (Hintergrund), nicht Teil des Modells
 let caretOverlay = null // Aufruf an der Schreibmarke im Editor, ebenfalls nicht Teil des Modells
 let caretId = 0
+let modelVersion = 0   // zählt hoch, wenn sich Lage oder Sichtbarkeit der Teile ändert (gemerkte Netze verwerfen)
 let caretUrl = null     // zuletzt verlangte Hervorhebung: kommt sie, während ein Modell noch lädt, wird sie danach neu gesetzt
 const CARET_COLOR = '#3d8bff'
 
@@ -166,8 +169,9 @@ async function load({ url, format, keepCamera, overlayUrl, mtl, resourceBase, fi
   if (id !== loadId) return
   let object
   try {
-    object = parse(format, data, { mtlTexts, resourceBase })
+    object = format === 'gltf' || format === 'glb' ? await parseGltf(data, resourceBase) : parse(format, data, { mtlTexts, resourceBase })
   } catch (error) {
+    if (id !== loadId) return
     showError(labels.parseError ? `${labels.parseError}\n${error.message || error}` : String(error))
     return
   }
@@ -300,9 +304,66 @@ function parse(format, data, extra = {}) {
     }
     case 'svg':
       return parseSvg(data)
+    case 'ply':
+      return parsePly(data)
     default:
       throw new Error(`Unknown format ${format}`)
   }
+}
+
+/**
+ * glTF/GLB: Szene mit Farben und Texturen (Puffer und Bilder neben der .gltf über resourceBase). PBR-Materialien werden
+ * zu denselben matten Materialien wie bei den übrigen Formaten; Draco-/KTX2-Kompression ist nicht dabei.
+ */
+function parseGltf(data, resourceBase) {
+  return new Promise((resolve, reject) => {
+    new GLTFLoader().parse(data, resourceBase || '', (gltf) => {
+      const group = new Group()
+      group.add(gltf.scene)
+      gltf.scene.traverse((child) => {
+        if (!child.isMesh) return
+        const convert = (material) => {
+          const plain = new MeshPhongMaterial({
+            color: material.color ? material.color.clone() : new Color(theme.model),
+            map: material.map || null,
+            vertexColors: !!material.vertexColors,
+            transparent: material.transparent,
+            opacity: material.opacity ?? 1,
+            side: DoubleSide,
+            shininess: 12,
+          })
+          plain.name = material.name || ''
+          // Ohne eigene Farbe (glTF-Standardmaterial ist weiß): in der Modellfarbe wie STL
+          if (!plain.map && !plain.vertexColors && plain.color.getHex() === 0xffffff) {
+            plain.color.set(theme.model)
+            plain.userData.themeColor = true
+          }
+          material.dispose()
+          return plain
+        }
+        child.material = Array.isArray(child.material) ? child.material.map(convert) : convert(child.material)
+        // Teile heißen wie ihr Knoten (für Messen und die Größe; eine Teile-Liste gibt es für glTF nicht)
+        if (!child.name) child.name = child.parent?.name || ''
+      })
+      resolve(group)
+    }, (error) => reject(error instanceof Error ? error : new Error(String(error?.message || error))))
+  })
+}
+
+/** PLY: Netz mit Farben je Ecke, oder ohne Flächen eine Punktwolke (3D-Scanner). */
+function parsePly(data) {
+  const geometry = new PLYLoader().parse(data)
+  const colors = geometry.hasAttribute('color')
+  if (!geometry.index) {
+    // Feste Größe in Pixeln, sonst verschwinden die Punkte beim Herauszoomen
+    const material = new PointsMaterial({ size: 3 * (window.devicePixelRatio || 1), sizeAttenuation: false, vertexColors: colors, color: colors ? 0xffffff : theme.model })
+    if (!colors) material.userData.themeColor = true
+    const group = new Group()
+    group.add(new Points(geometry, material))
+    return group
+  }
+  if (!geometry.hasAttribute('normal')) geometry.computeVertexNormals()
+  return single(geometry, colors)
 }
 
 /** OBJ mit MTL: Farben (Kd) und Texturen (map_Kd) aus der Materialdatei; nicht definierte Materialien in der Modellfarbe. */
@@ -466,6 +527,7 @@ function modelMaterial() {
 
 function setModel(object, keepCamera) {
   clearModel()
+  modelVersion++
   model = upWrap(object)
   // Eigene Materialien je Teil: Hervorheben trifft nur das gewählte Teil, nicht alle mit demselben Material
   model.traverse((child) => {
@@ -550,8 +612,12 @@ function updateInfo() {
   const size = bounds.getSize(new Vector3())
   const number = (value) => value.toLocaleString(init.locale || undefined, { maximumFractionDigits: 2 })
   const triangles = triangleCount(model)
+  let points = 0
+  if (triangles === 0) model.traverse((child) => { if (child.isPoints) points += child.geometry.attributes.position.count })
   const sizeText = size.z < 1e-9 ? `${number(size.x)} × ${number(size.y)}` : `${number(size.x)} × ${number(size.y)} × ${number(size.z)}`
-  info.textContent = `${sizeText} mm · ${triangles.toLocaleString(init.locale || undefined)} ${labels.triangles || 'triangles'}`
+  info.textContent = points
+    ? `${sizeText} mm · ${points.toLocaleString(init.locale || undefined)} ${labels.points || 'points'}`
+    : `${sizeText} mm · ${triangles.toLocaleString(init.locale || undefined)} ${labels.triangles || 'triangles'}`
   const problem = bedProblem()
   if (problem) {
     const warning = document.createElement('span')
@@ -756,6 +822,8 @@ const icons = {
   measure: '<path d="M2 11.5 11.5 2l2.5 2.5L4.5 14z"/><path d="M5 8.5l1.2 1.2M7 6.5l1.7 1.7M9 4.5l1.2 1.2"/>',
   measureAngle: '<path d="M13.5 13H2.5L11 3.5"/><path d="M8 13a5.5 5.5 0 0 0-1.6-3.9"/>',
   measureDiameter: '<circle cx="8" cy="8" r="5"/><path d="M3 13 13 3"/>',
+  measureArea: '<path d="M2.5 4.5 8 2l5.5 2.5v7L8 14l-5.5-2.5z"/><path d="M2.5 4.5 8 7l5.5-2.5M8 7v7"/><path d="M4 8.2l2.5 1.1M4 10.4l2.5 1.1" opacity=".7"/>',
+  measureHole: '<ellipse cx="8" cy="5" rx="5" ry="2"/><path d="M3 5v6c0 1.1 2.2 2 5 2s5-.9 5-2V5"/><path d="M8 5h5" />',
   section: '<path d="M8 1.8 13.5 5v6.2L8 14.3 2.5 11.2V5z" opacity=".45"/><path d="M1 8.5h14" /><path d="M2.5 8.5 8 11.6l5.5-3.1L8 5.4z" fill="currentColor" fill-opacity=".35"/>',
   display: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
   more: '<path d="M4 4.5 7.5 8 4 11.5M8.5 4.5 12 8l-3.5 3.5"/>',
@@ -807,6 +875,7 @@ function orient(object) {
 function setUp(axis) {
   if (upAxis === axis) return
   upAxis = axis
+  modelVersion++
   storeUp()
   if (!model) { updateToolbar(); return }
   // Wie ein neues Modell: Größe, Raster, Druckbett, Kanten, Schnitt und Kamera neu
@@ -840,6 +909,8 @@ const measureItems = [
   { name: 'measureDistance', icon: 'measure', action: () => setMeasureMode('distance'), isOn: () => measure.on && measure.mode === 'distance' },
   { name: 'measureAngle', action: () => setMeasureMode('angle'), isOn: () => measure.on && measure.mode === 'angle' },
   { name: 'measureDiameter', action: () => setMeasureMode('diameter'), isOn: () => measure.on && measure.mode === 'diameter' },
+  { name: 'measureHole', action: () => setMeasureMode('hole'), isOn: () => measure.on && measure.mode === 'hole' },
+  { name: 'measureArea', action: () => setMeasureMode('area'), isOn: () => measure.on && measure.mode === 'area' },
 ]
 
 const upItems = [
@@ -1257,9 +1328,9 @@ function toggleBed() {
 // Abstand: zwei Punkte. Winkel: drei Punkte, der zweite ist der Scheitel. Durchmesser: drei Punkte auf einem Kreis
 // (Rand eines Lochs) - die Ecken eines Vielecks aus $fn liegen genau auf dem Kreis, der Wert stimmt also exakt.
 
-const MEASURE_ICONS = { distance: 'measure', angle: 'measureAngle', diameter: 'measureDiameter' }
-const measure = { on: false, mode: 'distance', points: [], marker: null }
-const measureNeeds = () => (measure.mode === 'distance' ? 2 : 3)
+const MEASURE_ICONS = { distance: 'measure', angle: 'measureAngle', diameter: 'measureDiameter', hole: 'measureHole', area: 'measureArea' }
+const measure = { on: false, mode: 'distance', points: [], marker: null, hole: null, failed: false, area: null }
+const measureNeeds = () => (measure.mode === 'hole' || measure.mode === 'area' ? 1 : measure.mode === 'distance' ? 2 : 3)
 const raycaster = new Raycaster()
 const measureLabel = document.createElement('div')
 measureLabel.className = 'measure-label'
@@ -1276,13 +1347,17 @@ function updateMeasureHint() {
   const missing = measure.on && measure.points.length < measureNeeds()
   measureHint.hidden = !missing
   if (!missing) return
-  const name = { distance: 'measureDistance', angle: 'measureAngle', diameter: 'measureDiameter' }[measure.mode]
-  const text = `${label(name)} · ${measure.points.length}/${measureNeeds()}`
+  const name = { distance: 'measureDistance', angle: 'measureAngle', diameter: 'measureDiameter', hole: 'measureHole', area: 'measureArea' }[measure.mode]
+  const text = measure.mode === 'hole'
+    ? `${label(name)} · ${measure.failed ? (labels['measure.noHole'] || 'No round wall here') : (labels['measure.holeHint'] || 'click on the wall of a hole or pin')}`
+    : measure.mode === 'area' ? `${label(name)} · ${labels['measure.areaHint'] || 'click a face · Shift+click adds more'}`
+    : `${label(name)} · ${measure.points.length}/${measureNeeds()}`
   if (measureHint.textContent !== text) measureHint.textContent = text
 }
 
 function toggleMeasure() {
   measure.on = !measure.on
+  if (measure.on && layFlat.on) setLayFlat(false)
   if (!measure.on) clearMeasure()
   requestRender()
   renderer.domElement.style.cursor = measure.on ? 'crosshair' : ''
@@ -1322,6 +1397,9 @@ function angleAt(a, b, c) {
 
 function clearMeasure() {
   measure.points = []
+  measure.hole = null
+  measure.area = null
+  measure.failed = false
   if (measure.marker) {
     scene.remove(measure.marker)
     measure.marker.traverse((child) => { child.geometry?.dispose(); child.material?.dispose() })
@@ -1419,6 +1497,38 @@ function updateMeasureLabel() {
     text = angle === null ? '–' : `${number(angle)}°`
     detail = `${number(a.distanceTo(b))} mm · ${number(c.distanceTo(b))} mm`
     anchor = b.clone()
+  } else if (measure.mode === 'area' && measure.area) {
+    const area = measure.area
+    text = area.size < 100 ? `${number(area.size)} mm²` : `${area.size >= 1e6 ? number(area.size / 1e6) + ' m²' : number(area.size / 100) + ' cm²'}`
+    const parts = [`${labels['measure.perimeter'] || 'perimeter'} ${number(area.perimeter)} mm`]
+    if (area.count > 1) parts.push((labels['measure.areaCount'] || '{0} faces').replace('{0}', String(area.count)))
+    else if (area.kind) parts.unshift(area.kind)
+    detail = parts.join(' · ')
+    anchor = area.anchor.clone()
+  } else if (measure.mode === 'hole' && measure.hole) {
+    const hole = measure.hole
+    const kind = hole.hole ? (labels['measure.hole'] || 'Hole') : (labels['measure.pin'] || 'Pin')
+    const length = `${labels['measure.length'] || 'length'} ${number(hole.length)} mm`
+    const around = (radius) => number(2 * Math.PI * radius)
+    const circumference = labels['measure.circumference'] || 'circumference'
+    if (hole.type === 'torus') {
+      text = `⌀ ${number(hole.radius * 2)} / ${number(hole.radius2 * 2)} mm (${labels['measure.outerInner'] || 'outside / inside'})`
+      detail = `${hole.hole ? (labels['measure.torusGroove'] || 'Groove (torus)') : (labels['measure.torus'] || 'Ring (torus)')} · ` +
+        `${labels['measure.tube'] || 'tube'} ⌀ ${number(hole.tube * 2)} mm (r ${number(hole.tube)}) · ` +
+        `${labels['measure.centerline'] || 'centerline'} ⌀ ${number(hole.ring * 2)} mm, ${labels['measure.length'] || 'length'} ${around(hole.ring)} mm`
+    } else if (hole.type === 'cone') {
+      text = `⌀ ${number(hole.radius * 2)} → ${number(hole.radius2 * 2)} mm`
+      detail = `${kind}, ${labels['measure.cone'] || 'cone'} ${hole.angle.toLocaleString(init.locale || undefined, { maximumFractionDigits: 1 })}° · ${length} · ${circumference} ${around(hole.radius)} → ${around(hole.radius2)} mm`
+    } else if (hole.type === 'sphere') {
+      text = `⌀ ${number(hole.radius * 2)} mm`
+      detail = `${hole.hole ? (labels['measure.sphereHole'] || 'Hollow sphere') : (labels['measure.sphere'] || 'Sphere')} · r ${number(hole.radius)} mm · ${circumference} ${around(hole.radius)} mm`
+    } else {
+      text = `⌀ ${number(hole.radius * 2)} mm`
+      detail = `${kind} · r ${number(hole.radius)} mm · ${length} · ${circumference} ${around(hole.radius)} mm`
+    }
+    // Schild rechts neben dem Kreis (vom Betrachter aus), damit es den Ring nicht verdeckt
+    const right = new Vector3(1, 0, 0).applyQuaternion(camera.quaternion).projectOnPlane(hole.axis)
+    anchor = right.lengthSq() > 1e-9 ? hole.anchor.clone().addScaledVector(right.normalize(), hole.anchorRadius ?? hole.radius) : hole.anchor.clone()
   } else if (measure.mode === 'diameter') {
     const circle = circleThrough(a, b, c)
     text = circle ? `⌀ ${number(circle.radius * 2)} mm` : '–'
@@ -1431,6 +1541,7 @@ function updateMeasureLabel() {
     anchor = a.clone().add(b).multiplyScalar(0.5)
   }
   measureLabel.innerHTML = ''
+  measureLabel.classList.toggle('side', measure.mode === 'hole' || measure.mode === 'area')
   const main = document.createElement('div')
   main.textContent = text
   const parts = document.createElement('div')
@@ -1444,14 +1555,907 @@ function updateMeasureLabel() {
   measureLabel.hidden = middle.z > 1
 }
 
+// --- Loch oder Zapfen mit einem Klick: zusammenhängende, glatt gekrümmte Wand um den Treffer, darauf ein Zylinder ---
+
+const HOLE_MAX_BEND = 50      // Grad zwischen benachbarten Flächen der Wand ($fn = 8 hat 45°)
+const HOLE_MAX_FACES = 20000
+const HOLE_RIM_PIXELS = 20     // Klick neben einem Loch: so weit darf der Rand entfernt sein
+
+/**
+ * Loch oder Zapfen am Treffer: Wand um das getroffene Dreieck sammeln (über gemeinsame Kanten, solange der Knick klein
+ * ist), die Achse als die Richtung senkrecht zu allen Normalen bestimmen (kleinster Eigenvektor) und einen Kreis durch
+ * die Ecken legen. Liegt der Treffer auf einer ebenen Fläche (z. B. neben dem Loch, von oben gesehen), werden die runden
+ * Wände hinter den Kanten dieser Fläche in Klicknähe versucht und die gewählt, deren Rand dem Klick am nächsten liegt.
+ * Null, wenn nichts davon ein Zylinder ist (eben, Kugel, nur eine Fläche).
+ */
+function fitHole(hit) {
+  if (hit.faceIndex == null) return null
+  const net = holeNet()
+  const offset = net.offsets.get(hit.object)
+  if (offset === undefined) return null
+  const direct = fitWall(net, offset + hit.faceIndex, hit.point)
+  if (direct.hole) return direct.hole
+  if (!direct.flat) return null
+  // Kanten der ebenen Fläche, hinter denen es anders weitergeht, nach Abstand zum Klick
+  const candidates = []
+  for (const t of direct.plane) {
+    for (let k = 0; k < 3; k++) {
+      const a = net.corners[t * 3 + k], b = net.corners[t * 3 + (k + 1) % 3]
+      for (const other of net.edges.get(edgeKey(a, b)) || []) {
+        if (direct.plane.has(other)) continue
+        const middle = net.points[a].clone().add(net.points[b]).multiplyScalar(0.5)
+        candidates.push({ t: other, distance: middle.distanceTo(hit.point) })
+      }
+    }
+  }
+  candidates.sort((x, y) => x.distance - y.distance)
+  // Nur Ränder, die höchstens so weit vom Klick entfernt sind (in Bildschirm-Pixeln)
+  const tolerance = HOLE_RIM_PIXELS * worldPerPixel(hit.point)
+  let best = null
+  const tried = new Set()
+  let attempts = 0
+  for (const { t, distance } of candidates) {
+    if (attempts >= 12 || distance > tolerance * 4) break
+    if (tried.has(t)) continue
+    attempts++
+    const result = fitWall(net, t, hit.point)
+    for (const face of result.region) tried.add(face)
+    tried.add(t)
+    if (!result.hole) continue
+    // Abstand des Klicks vom Rand des Kreises (in der Ebene senkrecht zur Achse)
+    const offset = hit.point.clone().sub(result.hole.start).projectOnPlane(result.hole.axis).length()
+    const gap = Math.abs(offset - result.hole.radius)
+    if (gap <= tolerance && (!best || gap < best.gap)) best = { hole: result.hole, gap }
+  }
+  return best?.hole || null
+}
+
+/** Wie viele mm ein Bildschirm-Pixel an der Stelle [point] ausmacht. */
+function worldPerPixel(point) {
+  const height = renderer.domElement.clientHeight || 1
+  if (camera.isOrthographicCamera) return (camera.top - camera.bottom) / camera.zoom / height
+  const distance = point.distanceTo(camera.position)
+  return (2 * distance * Math.tan((camera.fov * Math.PI) / 360)) / height
+}
+
+const edgeKey = (a, b) => (a < b ? a * 67108864 + b : b * 67108864 + a)
+
+let holeNetCache = null
+
+/**
+ * Dreiecke aller sichtbaren Meshes des Modells mit zusammengefassten Ecken und Kanten → Dreiecke. Über alle Meshes, weil der
+ * 3MF-Loader ein Objekt je Material teilt: Bei OpenSCAD tragen die Wände eines Lochs die Farbe des abgezogenen Körpers und
+ * liegen in einem anderen Mesh als die Fläche drumherum. Gemerkt, bis sich Modell, Achse oder Sichtbarkeit ändern.
+ */
+function holeNet() {
+  if (holeNetCache?.model === model && holeNetCache.version === modelVersion) return holeNetCache.net
+  const size = hasModel ? bounds.getSize(new Vector3()).length() : 100
+  const quantum = Math.max(size * 1e-7, 1e-7)
+  const ids = new Map()
+  const points = []
+  const meshes = []
+  let total = 0
+  model.updateMatrixWorld(true)
+  model.traverse((child) => {
+    if (!child.isMesh || !child.visible || !child.geometry?.attributes.position) return
+    const geometry = child.geometry
+    const count = Math.floor((geometry.index ? geometry.index.count : geometry.attributes.position.count) / 3)
+    meshes.push({ mesh: child, count, offset: total })
+    total += count
+  })
+  const offsets = new Map(meshes.map((m) => [m.mesh, m.offset]))
+  const corners = new Int32Array(total * 3)
+  const edges = new Map()
+  const v = new Vector3()
+  for (const { mesh, count, offset } of meshes) {
+    const position = mesh.geometry.attributes.position
+    const index = mesh.geometry.index
+    const matrix = mesh.matrixWorld
+    for (let local = 0; local < count; local++) {
+      const t = offset + local
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(position, index ? index.getX(local * 3 + k) : local * 3 + k).applyMatrix4(matrix)
+        const key = `${Math.round(v.x / quantum)},${Math.round(v.y / quantum)},${Math.round(v.z / quantum)}`
+        let value = ids.get(key)
+        if (value === undefined) { value = points.length; ids.set(key, value); points.push(v.clone()) }
+        corners[t * 3 + k] = value
+      }
+      for (let k = 0; k < 3; k++) {
+        const key = edgeKey(corners[t * 3 + k], corners[t * 3 + (k + 1) % 3])
+        const list = edges.get(key)
+        if (list) list.push(t)
+        else edges.set(key, [t])
+      }
+    }
+  }
+  const normals = new Map()
+  // Normale mit Länge = doppelte Fläche
+  const normal = (t) => {
+    let n = normals.get(t)
+    if (!n) {
+      const a = points[corners[t * 3]], b = points[corners[t * 3 + 1]], c = points[corners[t * 3 + 2]]
+      n = new Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a))
+      normals.set(t, n)
+    }
+    return n
+  }
+  const net = { points, corners, edges, normal, offsets }
+  holeNetCache = { model, version: modelVersion, net }
+  return net
+}
+
+/**
+ * Glatte Wand ab Dreieck [start] und ihre Form: { region, flat, hole }. [hole] ist ein Zylinder, Kegel oder eine Kugel
+ * (`type`), oder null, wenn die Wand nichts davon ist.
+ *
+ * Erst die Flächen nah am Klick (zwei Schritte über Nachbarn) - so stört eine tangential anschließende Fläche (gerade
+ * Wand eines Langlochs, Zylinder unter einer Senkung) die erste Schätzung nicht. Danach zählen alle Flächen der Wand,
+ * deren Ecken auf der Form liegen, und die Form wird mit ihnen neu bestimmt (dreimal).
+ */
+function fitWall(net, start, point) {
+  const { points, corners, edges, normal } = net
+  const cosBend = Math.cos(HOLE_MAX_BEND * Math.PI / 180)
+  const region = new Set([start])
+  const queue = [start]
+  while (queue.length && region.size < HOLE_MAX_FACES) {
+    const t = queue.shift()
+    const n = normal(t).clone().normalize()
+    for (let k = 0; k < 3; k++) {
+      for (const other of edges.get(edgeKey(corners[t * 3 + k], corners[t * 3 + (k + 1) % 3])) || []) {
+        if (region.has(other)) continue
+        const m = normal(other)
+        if (m.lengthSq() === 0) continue
+        // Umlaufrichtung kann bei Netzen ohne saubere Orientierung kippen - Betrag zählt
+        if (Math.abs(n.dot(m.clone().normalize())) < cosBend) continue
+        region.add(other)
+        queue.push(other)
+      }
+    }
+  }
+  // Die ebene Fläche um den Treffer (Nachbarn mit gleicher Normale): Gibt es hier keine runde Form, versucht fitHole die
+  // runden Wände hinter ihren Kanten. Nicht die ganze glatte Wand - die reicht über eine 45°-Senkung hinweg ins Loch.
+  const cosPlane = Math.cos(0.5 * Math.PI / 180)
+  const plane = new Set([start])
+  const planeQueue = [start]
+  while (planeQueue.length && plane.size < HOLE_MAX_FACES) {
+    const t = planeQueue.shift()
+    const n = normal(t).clone().normalize()
+    for (let k = 0; k < 3; k++) {
+      for (const other of edges.get(edgeKey(corners[t * 3 + k], corners[t * 3 + (k + 1) % 3])) || []) {
+        if (plane.has(other) || normal(other).lengthSq() === 0) continue
+        if (Math.abs(n.dot(normal(other).clone().normalize())) < cosPlane) continue
+        plane.add(other)
+        planeQueue.push(other)
+      }
+    }
+  }
+  const raw = normalCovariance(region, normal, false)
+  const flat = raw.total > 0 && raw.values[1] / raw.total < 0.01
+  if (region.size < 2 || flat) return { region, plane, flat: true, hole: null }
+
+  const faceVertices = (faces) => {
+    const ids = new Set()
+    for (const t of faces) for (let k = 0; k < 3; k++) ids.add(corners[t * 3 + k])
+    return [...ids]
+  }
+  // Nachbarn bis zu zwei Schritte weit, deren Normale höchstens [degrees] von der angeklickten abweicht
+  const seedNormal = normal(start).clone().normalize()
+  const nearFaces = (degrees, steps = 2) => {
+    const cosNear = Math.cos(degrees * Math.PI / 180)
+    let near = new Set([start])
+    for (let step = 0; step < steps; step++) {
+      const next = new Set(near)
+      for (const t of near) {
+        for (let k = 0; k < 3; k++) {
+          for (const other of edges.get(edgeKey(corners[t * 3 + k], corners[t * 3 + (k + 1) % 3])) || []) {
+            if (region.has(other) && Math.abs(normal(other).clone().normalize().dot(seedNormal)) >= cosNear) next.add(other)
+          }
+        }
+      }
+      near = next
+    }
+    return near
+  }
+  const fit = (faces, type) => {
+    if (type === 'torus') return fitTorus(faces, net, faceVertices(faces))
+    if (type !== 'sphere') {
+      const rotational = fitRotational(faces, net, faceVertices(faces))
+      if (rotational || type) return rotational
+    }
+    return fitSphere(faces, net, faceVertices(faces))
+  }
+  // Erste Schätzung: die Form, die die Ecken nah am Klick am besten trifft
+  // Ein Drehkörper zuerst (auf wenige Ecken eines Zylinders passt auch eine Kugel). Erst weit (grob facettierte Löcher,
+  // $fn = 8 knickt um 45°), dann enger (eine Senkung knickt am Zylinder darunter je nach Winkel um 20-45°)
+  let shape = null
+  let near = null
+  for (const degrees of [HOLE_MAX_BEND, 20, 10]) {
+    const faces = nearFaces(degrees)
+    const candidate = fitRotational(faces, net, faceVertices(faces))
+    if (candidate && candidate.residual <= 0.01) { shape = candidate; near = faces; break }
+  }
+  // Schließt die Wand tangential an eine Rundung an (gerundete Kante), mischen die Nachbarn beide. Dann die Achse aus
+  // drei Normalen raten (sie steht auf ns - nj und ns - nk senkrecht) und nur die Flächen nehmen, die dazu passen.
+  if (!shape) {
+    const ring = [...nearFaces(HOLE_MAX_BEND, 3)].filter((t) => t !== start && normal(t).lengthSq() > 0)
+    const units = new Map([[start, seedNormal], ...ring.map((t) => [t, normal(t).clone().normalize()])])
+    // Achsen sammeln (gleiche Richtung nur einmal), nach Zahl der passenden Flächen ordnen und die erste nehmen, deren
+    // Flächen wirklich einen Zylinder oder Kegel bilden
+    const axes = []
+    const tries = Math.min(ring.length * ring.length, 400)
+    for (let i = 0; i < tries; i++) {
+      const j = ring[i % ring.length], k = ring[Math.floor(i / ring.length) % ring.length]
+      if (j === k) continue
+      const axis = seedNormal.clone().sub(units.get(j)).cross(seedNormal.clone().sub(units.get(k)))
+      if (axis.lengthSq() < 1e-10) continue
+      axis.normalize()
+      if (axes.some((other) => Math.abs(other.axis.dot(axis)) > 0.9998)) continue
+      const c0 = seedNormal.dot(axis)
+      axes.push({ axis, support: new Set([start, ...ring.filter((t) => Math.abs(units.get(t).dot(axis) - c0) < 0.01)]) })
+    }
+    axes.sort((a, b) => b.support.size - a.support.size)
+    for (const { support } of axes.slice(0, 24)) {
+      if (support.size < 3) break
+      const candidate = fitRotational(support, net, faceVertices(support))
+      if (candidate && candidate.residual <= 0.01) { shape = candidate; near = support; break }
+    }
+  }
+  if (!shape) {
+    for (const degrees of [HOLE_MAX_BEND, 20, 10]) {
+      const faces = nearFaces(degrees)
+      const candidate = fitSphere(faces, net, faceVertices(faces))
+      if (candidate && candidate.residual <= 0.01) { shape = candidate; near = faces; break }
+    }
+  }
+  // Form mit allen Flächen der Wand, die auf ihr liegen, neu bestimmen (dreimal)
+  const refine = (initial, faces) => {
+    let current = initial
+    let used = faces
+    for (let round = 0; round < 3; round++) {
+      const tolerance = Math.max(current.size * 0.02, 1e-3)
+      const inliers = new Set([...region].filter((t) => [0, 1, 2].every((k) => Math.abs(current.distance(points[corners[t * 3 + k]])) <= tolerance)))
+      if (!inliers.has(start) || inliers.size < 2) break
+      const refined = fit(inliers, current.type === 'sphere' || current.type === 'torus' ? current.type : 'rotational')
+      used = inliers
+      if (!refined) break
+      current = refined
+    }
+    return { shape: current, used }
+  }
+  // Torus (Donut, Rundung entlang einer Kante): braucht ein größeres Stück der Wand - wachsende Nachbarschaften, zuletzt
+  // die ganze glatte Wand. Auch, wenn schon ein Kegel gefunden ist, der nur einen Streifen abdeckt (grob facettierter
+  // Ring: jeder Streifen ist ein Kegelstumpf) - dann gewinnt der Torus, wenn er deutlich mehr der Wand erklärt.
+  const torusAround = () => {
+    for (const steps of [3, 6, 12, Infinity]) {
+      let faces = new Set([start])
+      if (steps === Infinity) faces = region
+      else for (let step = 0; step < steps; step++) {
+        const next = new Set(faces)
+        for (const t of faces) {
+          for (let k = 0; k < 3; k++) {
+            for (const other of edges.get(edgeKey(corners[t * 3 + k], corners[t * 3 + (k + 1) % 3])) || []) if (region.has(other)) next.add(other)
+          }
+        }
+        faces = next
+      }
+      const candidate = fitTorus(faces, net, faceVertices(faces))
+      // Strenger als bei den anderen Formen: Ein Torus mit passendem R und r schmiegt sich an fast jede glatte Wand an.
+      // Die Ecken eines echten Rings (rotate_extrude) liegen genau darauf.
+      if (candidate && candidate.residual <= 0.002) {
+        const refined = refine(candidate, faces)
+        // Der Ring muss in das Stück Wand passen, das er erklärt - sonst schmiegt sich ein riesiger Ring an eine fast
+        // ebene Fläche an
+        const extent = new Box3()
+        for (const i of faceVertices(refined.used)) extent.expandByPoint(points[i])
+        const hole = refined.shape.type === 'torus' ? refined.shape.result(refined.used, point, start) : null
+        if (hole && refined.shape.residual <= 0.002 && hole.radius <= extent.getSize(new Vector3()).length()) return refined
+      }
+      if (steps !== Infinity && faces.size === region.size) break
+    }
+    return null
+  }
+  let result = shape ? refine(shape, near) : null
+  // Deckt die Form nur einen Streifen der Wand ab (jeder Breitenkreis einer Kugel ist ein Kegelstumpf), auch Kugel und
+  // Torus versuchen; es gewinnt, was deutlich mehr der Wand erklärt
+  if (shape && shape.type !== 'sphere' && result.used.size < region.size * 0.7) {
+    for (const degrees of [HOLE_MAX_BEND, 20, 10]) {
+      const faces = nearFaces(degrees)
+      const candidate = fitSphere(faces, net, faceVertices(faces))
+      if (!candidate || candidate.residual > 0.01) continue
+      const sphere = refine(candidate, faces)
+      if (sphere.shape.type === 'sphere' && sphere.used.has(start) && sphere.used.size >= 1.5 * result.used.size) result = sphere
+      break
+    }
+  }
+  if (!result || result.used.size < region.size * 0.7) {
+    const torus = torusAround()
+    if (torus && torus.used.has(start) && (!result || torus.used.size >= 1.5 * result.used.size)) result = torus
+  }
+  if (!result) return { region, plane, flat: true, hole: null }
+  shape = result.shape
+  const used = result.used
+  // Die angeklickte Fläche muss zur Form gehören (sonst z. B. die gerade Wand eines Langlochs)
+  const tolerance = Math.max(shape.size * 0.02, 1e-3)
+  if (![0, 1, 2].every((k) => Math.abs(shape.distance(points[corners[start * 3 + k]])) <= tolerance)) return { region, plane, flat: true, hole: null }
+  const hole = shape.result(used, point, start)
+  hole.faces = used
+  return { region, plane, flat, hole }
+}
+
+/** Kovarianz der flächengewichteten Normalen, auf Wunsch um ihren Mittelwert verschoben. */
+function normalCovariance(faces, normal, centered) {
+  const mean = new Vector3()
+  let weight = 0
+  for (const t of faces) {
+    const n = normal(t)
+    const area = n.length()
+    if (area === 0) continue
+    mean.addScaledVector(n, 1)
+    weight += area
+  }
+  if (weight > 0) mean.divideScalar(weight)
+  const c = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+  for (const t of faces) {
+    const n = normal(t)
+    const area = n.length()
+    if (area === 0) continue
+    const x = [n.x / area, n.y / area, n.z / area]
+    if (centered) { x[0] -= mean.x; x[1] -= mean.y; x[2] -= mean.z }
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) c[i * 3 + j] += area * x[i] * x[j]
+  }
+  const { values, vectors } = eigenSymmetric3(c)
+  return { values, vectors, total: values[0] + values[1] + values[2], mean }
+}
+
+/**
+ * Zylinder oder Kegel: Die Achse steht auf allen Normalen im gleichen Winkel - die Richtung, in der die Normalen um ihren
+ * Mittelwert nicht streuen. Die Normalen der Flächen laufen durch die Achse (Schnittpunkt nach kleinsten Quadraten),
+ * der Abstand der Ecken von ihr als Gerade über der Höhe ergibt die Radien.
+ */
+function fitRotational(faces, net, vertexIds) {
+  const { points, corners, normal } = net
+  const cov = normalCovariance(faces, normal, true)
+  // Drehkörper: Die Normalen streuen um ihren Mittelwert in einer Ebene (bei einer Kugel auch quer dazu)
+  if (cov.values[2] < 1e-8 || cov.values[0] > 1e-5 * cov.values[2]) return null
+  const axis = cov.vectors[0].clone().normalize()
+  const u = Math.abs(axis.x) < 0.9 ? new Vector3(1, 0, 0).cross(axis).normalize() : new Vector3(0, 1, 0).cross(axis).normalize()
+  const v = axis.clone().cross(u)
+  // Achse in der Ebene senkrecht zu ihr. Wenige Höhen (Zylinder, Kegel zwischen zwei Ringen): Ecken gleicher Höhe liegen
+  // auf einem Kreis, x² + y² = 2·cx·x + 2·cy·y + E(Höhe). Viele Höhen (schräg angeschnittene Wand): Kegelgleichung
+  // x² + y² = 2·cx·x + 2·cy·y + C·t² + D·t + E (bei einem Zylinder C = D = 0)
+  const size = vertexIds.reduce((s, i) => Math.max(s, points[i].distanceTo(points[vertexIds[0]])), 0)
+  const step = Math.max(size * 1e-4, 1e-6)
+  const levels = new Map()
+  const flat2 = vertexIds.map((i) => {
+    const p = points[i]
+    const t = p.dot(axis)
+    const key = Math.round(t / step)
+    if (!levels.has(key)) levels.set(key, levels.size)
+    return { x: p.dot(u), y: p.dot(v), t, level: levels.get(key) }
+  })
+  // Für den Mittelpunkt zählen nur Höhen mit mindestens drei Ecken (die Spitze eines Kegels hat eine, eine schräg
+  // angeschnittene Wand je Höhe zwei). Gibt es keine solche Höhe, gilt die Kegelgleichung über alle Ecken.
+  const perLevel = new Array(levels.size).fill(0)
+  for (const q of flat2) perLevel[q.level]++
+  const levelIndex = new Map()
+  perLevel.forEach((n, level) => { if (n >= 3) levelIndex.set(level, levelIndex.size) })
+  const grouped = levelIndex.size > 0 && levelIndex.size <= 64
+  if (!grouped && flat2.length < 6) return null
+  const unknowns = grouped ? 2 + levelIndex.size : 5
+  const m = Array.from({ length: unknowns }, () => new Array(unknowns).fill(0))
+  const b = new Array(unknowns).fill(0)
+  // t relativ zur Mitte, sonst werden t² und 1 bei großen Koordinaten fast gleich
+  const tMid = flat2.reduce((sum, q) => sum + q.t, 0) / flat2.length
+  for (const q of flat2) {
+    if (grouped && !levelIndex.has(q.level)) continue
+    const row = new Array(unknowns).fill(0)
+    row[0] = 2 * q.x; row[1] = 2 * q.y
+    if (grouped) row[2 + levelIndex.get(q.level)] = 1
+    else { const t = q.t - tMid; row[2] = t * t; row[3] = t; row[4] = 1 }
+    const rhs = q.x * q.x + q.y * q.y
+    for (let r = 0; r < unknowns; r++) {
+      if (row[r] === 0) continue
+      for (let c = 0; c < unknowns; c++) m[r][c] += row[r] * row[c]
+      b[r] += row[r] * rhs
+    }
+  }
+  const solution = solveLinear(m, b)
+  if (!solution) return null
+  const [cx, cy] = solution
+  const origin = u.clone().multiplyScalar(cx).addScaledVector(v, cy)
+  // Radius über der Höhe als Gerade: ρ = ρ0 + k·t
+  let st = 0, sr = 0, stt = 0, str = 0, count = 0
+  const samples = flat2.map((q) => {
+    const r = Math.hypot(q.x - cx, q.y - cy)
+    st += q.t; sr += r; stt += q.t * q.t; str += q.t * r; count++
+    return [q.t, r]
+  })
+  if (count < 3) return null
+  const denominator = count * stt - st * st
+  let slope = levels.size > 1 && Math.abs(denominator) > 1e-12 ? (count * str - st * sr) / denominator : 0
+  const meanR = sr / count
+  if (Math.abs(slope) < Math.tan(0.5 * Math.PI / 180)) slope = 0
+  const r0 = (sr - slope * st) / count
+  const radiusAt = (t) => r0 + slope * t
+  let residual = 0
+  for (const [t, r] of samples) residual += (r - radiusAt(t)) ** 2
+  residual = Math.sqrt(residual / count) / Math.max(meanR, 1e-9)
+  if (!(meanR > 0)) return null
+  return {
+    type: slope === 0 ? 'cylinder' : 'cone',
+    residual,
+    size: meanR,
+    distance: (p) => {
+      const d = p.clone().sub(origin)
+      const t = d.dot(axis)
+      return Math.hypot(d.dot(u), d.dot(v)) - radiusAt(t)
+    },
+    result: (used, click, seed) => {
+      let min = Infinity, max = -Infinity
+      for (const t of used) for (let k = 0; k < 3; k++) {
+        const along = points[corners[t * 3 + k]].clone().sub(origin).dot(axis)
+        min = Math.min(min, along); max = Math.max(max, along)
+      }
+      const along = Math.min(Math.max(click.clone().sub(origin).dot(axis), min), max)
+      const seedNormal = normal(seed)
+      const seedPoint = points[corners[seed * 3]]
+      return {
+        type: slope === 0 ? 'cylinder' : 'cone',
+        radius: slope === 0 ? meanR : radiusAt(min),
+        radius2: slope === 0 ? meanR : radiusAt(max),
+        angle: (2 * Math.atan(Math.abs(slope)) * 180) / Math.PI,
+        axis, u, v,
+        start: origin.clone().addScaledVector(axis, min),
+        end: origin.clone().addScaledVector(axis, max),
+        anchor: origin.clone().addScaledVector(axis, along),
+        anchorRadius: slope === 0 ? meanR : radiusAt(along),
+        length: max - min,
+        // Loch: Normalen der Wand zeigen zur Achse hin, Zapfen: von ihr weg
+        hole: seedNormal.dot(seedPoint.clone().sub(origin).projectOnPlane(axis)) < 0,
+      }
+    },
+  }
+}
+
+/**
+ * Torus (Donut, auch ein Stück davon wie eine Rundung entlang einer Kante): Alle Punkte haben den Abstand r von einem
+ * Kreis mit Radius R (Mittellinie des Rings). Startwert: Für das richtige r liegen die Punkte „Fläche minus r mal
+ * Normale“ auf diesem Kreis (Suche über r, Ebene und Kreis dazu); danach Gauß-Newton über die Ecken mit Mittelpunkt,
+ * Achse, R und r.
+ */
+function fitTorus(faces, net, vertexIds) {
+  const { points, corners, normal } = net
+  if (faces.size < 8 || vertexIds.length < 12) return null
+  const items = []
+  for (const t of faces) {
+    const n = normal(t)
+    const length = n.length()
+    if (length === 0) continue
+    items.push({
+      m: points[corners[t * 3]].clone().add(points[corners[t * 3 + 1]]).add(points[corners[t * 3 + 2]]).divideScalar(3),
+      n: n.clone().divideScalar(length),
+      w: length,
+    })
+  }
+  const box = new Box3()
+  for (const i of vertexIds) box.expandByPoint(points[i])
+  const size = box.getSize(new Vector3()).length()
+  if (!(size > 0)) return null
+  // Kreis durch die Punkte m - s·r·n: Ebene (kleinste Streuung) und algebraischer Kreis darin
+  const spine = (r, sign) => {
+    const centers = items.map((item) => item.m.clone().addScaledVector(item.n, -sign * r))
+    const mean = new Vector3()
+    for (const c of centers) mean.add(c)
+    mean.divideScalar(centers.length)
+    const cov = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    for (const c of centers) {
+      const d = [c.x - mean.x, c.y - mean.y, c.z - mean.z]
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) cov[i * 3 + j] += d[i] * d[j]
+    }
+    const axis = eigenSymmetric3(cov).vectors[0].normalize()
+    const u = Math.abs(axis.x) < 0.9 ? new Vector3(1, 0, 0).cross(axis).normalize() : new Vector3(0, 1, 0).cross(axis).normalize()
+    const v = axis.clone().cross(u)
+    const m = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+    const b = [0, 0, 0]
+    for (const c of centers) {
+      const d = c.clone().sub(mean)
+      const x = d.dot(u), y = d.dot(v)
+      const row = [x, y, 1]
+      for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) m[i][j] += row[i] * row[j]; b[i] -= row[i] * (x * x + y * y) }
+    }
+    const s = solveLinear(m, b)
+    if (!s) return null
+    const cx = -s[0] / 2, cy = -s[1] / 2
+    const R2 = cx * cx + cy * cy - s[2]
+    if (!(R2 > 0)) return null
+    const R = Math.sqrt(R2)
+    const center = mean.clone().addScaledVector(u, cx).addScaledVector(v, cy)
+    let error = 0
+    for (const c of centers) {
+      const d = c.clone().sub(center)
+      const h = d.dot(axis)
+      error += (Math.hypot(d.dot(u), d.dot(v)) - R) ** 2 + h * h
+    }
+    return { center, axis, R, r, error: Math.sqrt(error / centers.length) }
+  }
+  let best = null
+  for (const sign of [1, -1]) {
+    for (let k = 0; k <= 48; k++) {
+      const r = size * 0.002 * Math.pow(250, k / 48)
+      const candidate = spine(r, sign)
+      if (candidate && candidate.R > r * 0.05 && (!best || candidate.error < best.error)) best = { ...candidate, sign }
+    }
+  }
+  if (!best) return null
+  // Feiner um das beste r (Goldener Schnitt)
+  let lo = best.r / 1.15, hi = best.r * 1.15
+  for (let k = 0; k < 30; k++) {
+    const a = hi - (hi - lo) / 1.618, c = lo + (hi - lo) / 1.618
+    const ea = spine(a, best.sign)?.error ?? Infinity
+    const ec = spine(c, best.sign)?.error ?? Infinity
+    if (ea < ec) hi = c; else lo = a
+  }
+  best = { ...spine((lo + hi) / 2, best.sign), sign: best.sign }
+  if (!best.axis) return null
+
+  // Gauß-Newton (Levenberg-Marquardt) über die Ecken: Mittelpunkt (3), Neigung der Achse (2, je Schritt um die aktuelle
+  // Achse gemessen - Winkel wie Breite/Länge wären bei senkrechter Achse unbestimmt), R, r
+  const sample = vertexIds.length > 1500 ? vertexIds.filter((_, i) => i % Math.ceil(vertexIds.length / 1500) === 0) : vertexIds
+  let axis0 = best.axis.clone().normalize()
+  const basis = (a) => {
+    const u = Math.abs(a.x) < 0.9 ? new Vector3(1, 0, 0).cross(a).normalize() : new Vector3(0, 1, 0).cross(a).normalize()
+    return [u, a.clone().cross(u)]
+  }
+  const axisOf = (p) => {
+    const [bu, bv] = basis(axis0)
+    return axis0.clone().addScaledVector(bu, p[3]).addScaledVector(bv, p[4]).normalize()
+  }
+  let params = [best.center.x, best.center.y, best.center.z, 0, 0, best.R, best.r]
+  const residuals = (p) => {
+    const c = new Vector3(p[0], p[1], p[2])
+    const a = axisOf(p)
+    return sample.map((i) => {
+      const d = points[i].clone().sub(c)
+      const h = d.dot(a)
+      const rho = Math.sqrt(Math.max(d.lengthSq() - h * h, 0))
+      return Math.hypot(rho - p[5], h) - p[6]
+    })
+  }
+  const cost = (res) => res.reduce((sum, x) => sum + x * x, 0)
+  let current = residuals(params)
+  let lambda = 1e-3
+  for (let iteration = 0; iteration < 60; iteration++) {
+    const J = []
+    for (let j = 0; j < 7; j++) {
+      const step = j === 3 || j === 4 ? 1e-7 : Math.max(size * 1e-8, 1e-10)
+      const shifted = params.slice()
+      shifted[j] += step
+      const r1 = residuals(shifted)
+      J.push(r1.map((x, i) => (x - current[i]) / step))
+    }
+    const A = Array.from({ length: 7 }, (_, i) => Array.from({ length: 7 }, (_, j) => J[i].reduce((sum, x, k) => sum + x * J[j][k], 0)))
+    const g = Array.from({ length: 7 }, (_, i) => -J[i].reduce((sum, x, k) => sum + x * current[k], 0))
+    for (let i = 0; i < 7; i++) A[i][i] *= 1 + lambda
+    const delta = solveLinear(A, g)
+    if (!delta) break
+    const next = params.map((x, i) => x + delta[i])
+    const nextResiduals = residuals(next)
+    if (cost(nextResiduals) < cost(current)) {
+      // Achse übernehmen, Neigung wieder auf 0
+      axis0 = axisOf(next)
+      params = [next[0], next[1], next[2], 0, 0, next[5], next[6]]
+      current = nextResiduals
+      lambda = Math.max(lambda / 10, 1e-12)
+      if (delta.every((d, i) => Math.abs(d) < (i === 3 || i === 4 ? 1e-10 : size * 1e-10))) break
+    } else {
+      lambda *= 10
+      if (lambda > 1e10) break
+    }
+  }
+  const center = new Vector3(params[0], params[1], params[2])
+  const axis = axis0.clone()
+  const R = Math.abs(params[5]), r = Math.abs(params[6])
+  // Ein sehr großer Ring wäre eigentlich ein Zylinder (oder Kegel) - die findet fitRotational
+  // R klein gegen r: eigentlich eine Kugel (die findet fitSphere)
+  if (!(r > 0) || !(R > 0) || R > 3 * size || R < 0.1 * r) return null
+  const residual = Math.sqrt(cost(current) / sample.length) / r
+  const u = Math.abs(axis.x) < 0.9 ? new Vector3(1, 0, 0).cross(axis).normalize() : new Vector3(0, 1, 0).cross(axis).normalize()
+  const v = axis.clone().cross(u)
+  const distance = (p) => {
+    const d = p.clone().sub(center)
+    const h = d.dot(axis)
+    const rho = Math.sqrt(Math.max(d.lengthSq() - h * h, 0))
+    return Math.hypot(rho - R, h) - r
+  }
+  return {
+    type: 'torus',
+    residual,
+    size: r,
+    distance,
+    result: (used, click, seed) => ({
+      type: 'torus', radius: R + r, radius2: Math.max(R - r, 0), ring: R, tube: r, center, axis, u, v,
+      start: center.clone(), end: center.clone(), anchor: center.clone(), anchorRadius: R + r, length: 0,
+      // Wulst: Normalen zeigen vom Ring weg; Hohlkehle (Rundung nach innen): zum Ring hin
+      hole: best.sign < 0,
+    }),
+  }
+}
+
+/** Kugel durch die Ecken (algebraisch: x² + y² + z² + D x + E y + F z + G = 0). */
+function fitSphere(faces, net, vertexIds) {
+  const { points, corners, normal } = net
+  if (vertexIds.length < 4) return null
+  const origin = points[vertexIds[0]].clone()
+  const m = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+  const b = [0, 0, 0, 0]
+  for (const i of vertexIds) {
+    const d = points[i].clone().sub(origin)
+    const row = [d.x, d.y, d.z, 1]
+    const rhs = -(d.x * d.x + d.y * d.y + d.z * d.z)
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 4; c++) m[r][c] += row[r] * row[c]
+      b[r] += row[r] * rhs
+    }
+  }
+  const solution = solveLinear(m, b)
+  if (!solution) return null
+  const [D, E, F, G] = solution
+  const center = origin.clone().add(new Vector3(-D / 2, -E / 2, -F / 2))
+  const r2 = (D * D + E * E + F * F) / 4 - G
+  if (!(r2 > 0)) return null
+  const radius = Math.sqrt(r2)
+  let residual = 0
+  for (const i of vertexIds) residual += (points[i].distanceTo(center) - radius) ** 2
+  residual = Math.sqrt(residual / vertexIds.length) / radius
+  // Liegen die Ecken eines Dreiecks auf einer Kugel, zeigt seine Normale vom Mittelpunkt zum Umkreismittelpunkt des
+  // Dreiecks - auch bei schmalen Dreiecken. Ein Stück Torus o. Ä. passt sonst ungefähr auf eine Kugel.
+  const cosRadial = Math.cos(3 * Math.PI / 180)
+  for (const t of faces) {
+    const n = normal(t)
+    if (n.lengthSq() === 0) continue
+    const circle = circleThrough(points[corners[t * 3]], points[corners[t * 3 + 1]], points[corners[t * 3 + 2]])
+    if (!circle) continue
+    const radial = circle.center.clone().sub(center)
+    if (radial.length() < radius * 1e-3) continue
+    if (Math.abs(n.clone().normalize().dot(radial.normalize())) < cosRadial) return null
+  }
+  return {
+    type: 'sphere',
+    residual,
+    size: radius,
+    distance: (p) => p.distanceTo(center) - radius,
+    result: (used, click, seed) => {
+      const seedPoint = points[corners[seed * 3]]
+      // Ring quer zur Blickrichtung (beim Drehen der Ansicht neu ausgerichtet, siehe showHole)
+      return { type: 'sphere', radius, radius2: radius, center, start: center.clone(), end: center.clone(), anchor: center.clone(), anchorRadius: radius, length: 0, axis: new Vector3(0, 0, 1), u: new Vector3(1, 0, 0), v: new Vector3(0, 1, 0), hole: normal(seed).dot(seedPoint.clone().sub(center)) < 0 }
+    },
+  }
+}
+
+/** Lineares Gleichungssystem (Gauß mit Pivotsuche); null, wenn es keine eindeutige Lösung hat. */
+function solveLinear(matrix, rhs) {
+  const n = rhs.length
+  const a = matrix.map((row, i) => [...row, rhs[i]])
+  for (let col = 0; col < n; col++) {
+    let pivot = col
+    for (let r = col + 1; r < n; r++) if (Math.abs(a[r][col]) > Math.abs(a[pivot][col])) pivot = r
+    if (Math.abs(a[pivot][col]) < 1e-12) return null
+    ;[a[col], a[pivot]] = [a[pivot], a[col]]
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue
+      const factor = a[r][col] / a[col][col]
+      for (let c = col; c <= n; c++) a[r][c] -= factor * a[col][c]
+    }
+  }
+  return a.map((row, i) => row[n] / row[i])
+}
+
+/** Eigenwerte (aufsteigend) und Eigenvektoren einer symmetrischen 3x3-Matrix (Jacobi-Verfahren). */
+function eigenSymmetric3(m) {
+  const a = [[m[0], m[1], m[2]], [m[3], m[4], m[5]], [m[6], m[7], m[8]]]
+  const vec = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+  for (let sweep = 0; sweep < 50; sweep++) {
+    let off = 0
+    for (let p = 0; p < 3; p++) for (let q = p + 1; q < 3; q++) off += a[p][q] * a[p][q]
+    if (off < 1e-20) break
+    for (let p = 0; p < 3; p++) {
+      for (let q = p + 1; q < 3; q++) {
+        if (Math.abs(a[p][q]) < 1e-30) continue
+        const theta = (a[q][q] - a[p][p]) / (2 * a[p][q])
+        const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1))
+        const cos = 1 / Math.sqrt(t * t + 1), sin = t * cos
+        for (let k = 0; k < 3; k++) {
+          const akp = a[k][p], akq = a[k][q]
+          a[k][p] = cos * akp - sin * akq
+          a[k][q] = sin * akp + cos * akq
+        }
+        for (let k = 0; k < 3; k++) {
+          const apk = a[p][k], aqk = a[q][k]
+          a[p][k] = cos * apk - sin * aqk
+          a[q][k] = sin * apk + cos * aqk
+        }
+        for (let k = 0; k < 3; k++) {
+          const vkp = vec[k][p], vkq = vec[k][q]
+          vec[k][p] = cos * vkp - sin * vkq
+          vec[k][q] = sin * vkp + cos * vkq
+        }
+      }
+    }
+  }
+  const order = [0, 1, 2].sort((i, j) => a[i][i] - a[j][j])
+  return {
+    values: order.map((i) => a[i][i]),
+    vectors: order.map((i) => new Vector3(vec[0][i], vec[1][i], vec[2][i])),
+  }
+}
+
+/** Lineares Gleichungssystem 3x3 (Cramer); null, wenn es keine eindeutige Lösung hat. */
+function solve3(m, b) {
+  const det = (x) => x[0][0] * (x[1][1] * x[2][2] - x[1][2] * x[2][1]) - x[0][1] * (x[1][0] * x[2][2] - x[1][2] * x[2][0]) + x[0][2] * (x[1][0] * x[2][1] - x[1][1] * x[2][0])
+  const d = det(m)
+  if (Math.abs(d) < 1e-18) return null
+  return [0, 1, 2].map((col) => det(m.map((row, i) => row.map((value, j) => (j === col ? b[i] : value)))) / d)
+}
+
+/** Treffer unter der Maus (wie pick, aber das ganze Dreieck). */
+function pickHit(event) {
+  if (!model) return null
+  const rect = renderer.domElement.getBoundingClientRect()
+  const mouse = new Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
+  raycaster.setFromCamera(mouse, camera)
+  return raycaster.intersectObject(model, true).filter((hit) => hit.object.isMesh && (!section.on || clipPlane.distanceToPoint(hit.point) >= -1e-6))[0] || null
+}
+
+/**
+ * Fläche messen: eine ebene Fläche (Nachbarn mit gleicher Normale) oder, wenn die angeklickte Wand rund ist, die ganze
+ * Mantelfläche (Zylinder, Kegel, Kugel, Torus). Mit Shift kommen weitere Flächen dazu bzw. fallen wieder weg. Umfang:
+ * alle Kanten am Rand der Auswahl.
+ */
+function pickArea(hit, add) {
+  if (hit.faceIndex == null) return
+  const net = holeNet()
+  const offset = net.offsets.get(hit.object)
+  if (offset === undefined) return
+  const start = offset + hit.faceIndex
+  const wall = fitWall(net, start, hit.point)
+  const faces = wall.hole?.faces?.size > wall.plane.size ? wall.hole.faces : wall.plane
+  const kind = faces === wall.plane ? (labels['measure.planar'] || 'flat face')
+    : ({ cylinder: labels['measure.cylinderWall'] || 'cylinder wall', cone: labels['measure.coneWall'] || 'cone wall', sphere: labels['measure.sphereWall'] || 'sphere surface', torus: labels['measure.torusWall'] || 'torus surface' })[wall.hole.type]
+  let selected = new Set(faces)
+  let count = 1
+  const previous = measure.area
+  if (add && previous && previous.net === net) {
+    selected = new Set(previous.faces)
+    // Schon gewählt: wieder herausnehmen
+    if (selected.has(start)) for (const t of faces) selected.delete(t)
+    else for (const t of faces) selected.add(t)
+    count = previous.count + (previous.faces.has(start) ? -1 : 1)
+    if (selected.size === 0) return clearMeasure()
+  }
+  const { points, corners, edges, normal } = net
+  let size = 0
+  for (const t of selected) size += normal(t).length() / 2
+  let perimeter = 0
+  const boundary = []
+  for (const t of selected) {
+    for (let k = 0; k < 3; k++) {
+      const a = corners[t * 3 + k], b = corners[t * 3 + (k + 1) % 3]
+      const inside = (edges.get(edgeKey(a, b)) || []).filter((other) => selected.has(other)).length
+      if (inside === 1) {
+        perimeter += points[a].distanceTo(points[b])
+        boundary.push(points[a].x, points[a].y, points[a].z, points[b].x, points[b].y, points[b].z)
+      }
+    }
+  }
+  if (measure.marker) {
+    scene.remove(measure.marker)
+    measure.marker.traverse((child) => { child.geometry?.dispose(); child.material?.dispose() })
+  }
+  const color = theme.active || '#3574f0'
+  const positions = []
+  for (const t of selected) for (let k = 0; k < 3; k++) { const p = points[corners[t * 3 + k]]; positions.push(p.x, p.y, p.z) }
+  const group = new Group()
+  const surface = new BufferGeometry()
+  surface.setAttribute('position', new Float32BufferAttribute(positions, 3))
+  group.add(new Mesh(surface, new MeshBasicMaterial({ color, transparent: true, opacity: 0.35, side: DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })))
+  if (boundary.length) {
+    const lines = new BufferGeometry()
+    lines.setAttribute('position', new Float32BufferAttribute(boundary, 3))
+    group.add(new LineSegments(lines, new LineBasicMaterial({ color })))
+  }
+  measure.marker = group
+  scene.add(group)
+  measure.area = { net, faces: selected, size, perimeter, count: Math.max(count, 1), kind: count <= 1 ? kind : null, anchor: hit.point.clone() }
+  measure.points = [hit.point.clone()]
+  updateMeasureLabel()
+  requestRender()
+}
+
+function showHole(hole) {
+  clearMeasure()
+  measure.hole = hole
+  measure.points = [hole.anchor]
+  const group = new Group()
+  const color = theme.active || '#3574f0'
+  const ring = (center, radius, u = hole.u, v = hole.v) => {
+    const points = []
+    for (let i = 0; i <= 96; i++) {
+      const angle = (i / 96) * Math.PI * 2
+      points.push(center.clone().addScaledVector(u, Math.cos(angle) * radius).addScaledVector(v, Math.sin(angle) * radius))
+    }
+    const line = new Line(new BufferGeometry().setFromPoints(points), new LineBasicMaterial({ color, depthTest: false }))
+    line.renderOrder = 10
+    group.add(line)
+  }
+  if (hole.type === 'torus') {
+    // Außen- und Innenrand in der Mittelebene, dazwischen die Mittellinie des Rings (blasser)
+    ring(hole.center, hole.radius)
+    if (hole.radius2 > 0) ring(hole.center, hole.radius2)
+    const before = group.children.length
+    ring(hole.center, hole.ring)
+    for (const line of group.children.slice(before)) { line.material.transparent = true; line.material.opacity = 0.5 }
+    measure.marker = group
+    scene.add(group)
+    updateMeasureLabel()
+    requestRender()
+    return
+  }
+  if (hole.type === 'sphere') {
+    // Umriss der Kugel quer zur Blickrichtung
+    const view = camera.position.clone().sub(hole.center).normalize()
+    const u = Math.abs(view.z) < 0.9 ? new Vector3(0, 0, 1).cross(view).normalize() : new Vector3(1, 0, 0).cross(view).normalize()
+    ring(hole.center, hole.radius, u, view.clone().cross(u))
+    measure.marker = group
+    scene.add(group)
+    updateMeasureLabel()
+    requestRender()
+    return
+  }
+  ring(hole.start, hole.radius)
+  if (hole.length > hole.radius * 0.05) ring(hole.end, hole.radius2)
+  const axisLine = new Line(new BufferGeometry().setFromPoints([hole.start, hole.end]), new LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.6 }))
+  axisLine.renderOrder = 10
+  group.add(axisLine)
+  measure.marker = group
+  scene.add(group)
+  updateMeasureLabel()
+  requestRender()
+}
+
 // Klick (ohne Ziehen) setzt einen Punkt; Ziehen dreht wie gewohnt
 let pointerDown = null
 renderer.domElement.addEventListener('pointerdown', (event) => { pointerDown = { x: event.clientX, y: event.clientY } })
 renderer.domElement.addEventListener('pointerup', (event) => {
+  if (layFlat.on && pointerDown && event.button === 0) {
+    const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y)
+    pointerDown = null
+    if (moved > 4) return
+    const hit = pickHit(event)
+    if (hit && applyLayFlat(hit)) {
+      // Modus aus, die Rückmeldung bleibt noch stehen
+      const text = layFlatHint.textContent
+      setLayFlat(false)
+      if (text !== (labels['transform.layFlatHint'] || 'Click the face that should lie on the bed · Esc cancels')) showLayFlatResult(text)
+    }
+    return
+  }
   if (!measure.on || !pointerDown || event.button !== 0) return
   const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y)
   pointerDown = null
   if (moved > 4) return
+  if (measure.mode === 'area') {
+    const hit = pickHit(event)
+    if (hit) pickArea(hit, event.shiftKey)
+    else clearMeasure()
+    return
+  }
+  if (measure.mode === 'hole') {
+    const hit = pickHit(event)
+    const hole = hit ? fitHole(hit) : null
+    if (hole) showHole(hole)
+    else { clearMeasure(); measure.failed = !!hit; updateMeasureHint() }
+    return
+  }
   const point = pick(event)
   if (point) addMeasurePoint(point)
   else clearMeasure()
@@ -1467,6 +2471,7 @@ document.addEventListener('keydown', (event) => {
 })
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return
+  if (layFlat.on) return setLayFlat(false)
   if (measure.points.length) clearMeasure()
   else if (measure.on) toggleMeasure()
 })
@@ -1687,8 +2692,8 @@ function refreshPrintCheck() {
   print.timer = setTimeout(runPrintCheck, 0)
 }
 
-/** Ein flaches Modell (SVG) hat nichts zu drucken. */
-const modelIsFlat = () => !hasModel || bounds.max.z - bounds.min.z < 1e-9
+/** Ein flaches Modell (SVG) oder eine Punktwolke (PLY ohne Flächen) hat nichts zu drucken. */
+const modelIsFlat = () => !hasModel || bounds.max.z - bounds.min.z < 1e-9 || triangleCount(model) === 0
 
 function runPrintCheck() {
   removePrintOverlay()
@@ -2065,6 +3070,22 @@ function setMeasure(value) {
   const points = Array.isArray(value) ? value : value?.points
   measure.mode = (!Array.isArray(value) && value?.mode) || 'distance'
   clearMeasure()
+  if (measure.mode === 'hole' || measure.mode === 'area') {
+    // Wie Klicks auf die Punkte aus der aktuellen Blickrichtung (Screenshot-Helfer); bei Flächen die weiteren mit Shift
+    if (!measure.on) toggleMeasure()
+    ;(points || []).forEach((point, index) => {
+      const target = new Vector3(...point).project(camera)
+      raycaster.setFromCamera(new Vector2(target.x, target.y), camera)
+      const hit = raycaster.intersectObject(model, true).find((h) => h.object.isMesh)
+      if (!hit) return
+      if (measure.mode === 'area') return pickArea(hit, index > 0)
+      const hole = index === 0 ? fitHole(hit) : null
+      if (hole) showHole(hole)
+    })
+    updateToolbar()
+    requestRender()
+    return
+  }
   for (const point of points || []) addMeasurePoint(new Vector3(...point))
   updateToolbar()
   requestRender()
@@ -2149,6 +3170,7 @@ const partIcons = {
   separate: '<rect x="2" y="5" width="7" height="7" rx="1"/><path d="M7 2.5h5.5a1 1 0 0 1 1 1V9"/>',
   delete: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/>',
   apply: '<path d="M3 8.5l3 3 7-7"/>',
+  layFlat: '<path d="M2 13.5h12"/><path d="M4.5 11l3.5-7 3.5 7z"/><path d="M8 4V1.5" opacity=".5"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
 }
 const hiddenParts = new Set()
@@ -2444,6 +3466,7 @@ function selectPart(name) {
 /** Ausgeblendete Teile (nach Namen) unsichtbar machen - die Datei bleibt, wie sie ist. */
 function applyHidden() {
   model?.traverse((child) => { if (child.isMesh) child.visible = !hiddenParts.has(child.name) })
+  modelVersion++
   refreshPrintCheck()
   requestRender()
 }
@@ -2488,6 +3511,7 @@ function openTransform(rows) {
 
 function toggleTransform() {
   transformOpen = !transformOpen
+  if (!transformOpen) setLayFlat(false)
   renderTransform()
   updateToolbar()
 }
@@ -2573,6 +3597,10 @@ function renderTransform() {
     switcher.appendChild(button)
   }
   head.appendChild(switcher)
+  // Fläche aufs Bett: Klick ins Modell dreht so, dass die getroffene Fläche unten liegt
+  const lay = iconButton('layFlat', labels['transform.layFlatTip'] || 'Lay face on bed: click a face in the view', () => setLayFlat(!layFlat.on))
+  lay.classList.toggle('on', layFlat.on)
+  head.appendChild(lay)
   head.appendChild(iconButton('close', labels['close'] || 'Close', toggleTransform))
   transformPanel.appendChild(head)
   const box = targetBox()
@@ -2725,6 +3753,116 @@ function showOrigin(point) {
 }
 
 /** Matrix in Weltkoordinaten bilden, in die der Datei umrechnen und an die IDE geben (die schreibt die Datei). */
+// --- Fläche aufs Bett (wie im Slicer): Klick auf eine Fläche, das Ziel wird gedreht, bis sie nach unten zeigt ---
+
+const layFlat = { on: false }
+const layFlatHint = document.createElement('div')
+layFlatHint.className = 'measure-hint top'
+layFlatHint.hidden = true
+document.body.appendChild(layFlatHint)
+
+let layFlatHintTimer = null
+
+function setLayFlat(on) {
+  if (layFlat.on === on) return
+  layFlat.on = on
+  if (on && measure.on) toggleMeasure()
+  clearTimeout(layFlatHintTimer)
+  layFlatHint.hidden = !on
+  layFlatHint.textContent = labels['transform.layFlatHint'] || 'Click the face that should lie on the bed · Esc cancels'
+  renderer.domElement.style.cursor = on ? 'crosshair' : (measure.on ? 'crosshair' : '')
+  renderTransform()
+}
+
+/**
+ * Dreht das gewählte Teil (bzw. das ganze Modell) um seine Mitte, bis die Normale der getroffenen Fläche nach unten zeigt;
+ * der tiefste Punkt bleibt auf seiner Höhe. Die Matrix geht wie beim Transformieren in Koordinaten der Datei ans Plugin.
+ */
+function applyLayFlat(hit) {
+  const root = fileRoot()
+  if (!root || !hit.face) return false
+  // Mit gewähltem Teil: ein Klick auf ein anderes Teil wählt dieses und dreht es gleich
+  if (selectedPart && hit.object.name !== selectedPart) {
+    if (!partNames().includes(hit.object.name)) return false
+    select(hit.object.name)
+  }
+  root.updateMatrixWorld(true)
+  const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
+  // Die sichtbare Seite zählt (Netze mit verdrehter Umlaufrichtung)
+  if (normal.dot(camera.position.clone().sub(hit.point)) < 0 && !camera.isOrthographicCamera) normal.negate()
+  const down = new Vector3(0, 0, -1)
+  if (normal.dot(down) > 1 - 1e-9) {
+    showLayFlatResult(labels['transform.layFlatAlready'] || 'This face already lies at the bottom')
+    return true
+  }
+  const turn = new Quaternion().setFromUnitVectors(normal, down)
+  const rotation = new Matrix4().makeRotationFromQuaternion(turn)
+  const meshes = targetMeshes()
+  const box = new Box3()
+  for (const mesh of meshes) box.expandByObject(mesh)
+  if (box.isEmpty()) return false
+  const center = box.getCenter(new Vector3())
+  let world = new Matrix4().makeTranslation(center.x, center.y, center.z).multiply(rotation).multiply(new Matrix4().makeTranslation(-center.x, -center.y, -center.z))
+  // Tiefster Punkt vorher und nachher (genau über alle Ecken, nicht über den gedrehten Umriss)
+  let before = Infinity
+  let after = Infinity
+  const v = new Vector3()
+  for (const mesh of meshes) {
+    const position = mesh.geometry.attributes.position
+    for (let i = 0; i < position.count; i++) {
+      v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld)
+      before = Math.min(before, v.z)
+      after = Math.min(after, v.applyMatrix4(world).z)
+    }
+  }
+  world = new Matrix4().makeTranslation(0, 0, before - after).multiply(world)
+  const file = root.matrixWorld.clone().invert().multiply(world).multiply(root.matrixWorld)
+  const e = file.elements
+  const matrix = [0, 1, 2].flatMap((r) => [0, 1, 2, 3].map((c) => e[c * 4 + r]))
+  const part = selectedPart
+  // Die Drehung erst sichtbar vorführen (bei gleichförmigen Teilen sähe man sonst nichts), dann in die Datei schreiben;
+  // das neu geladene Modell steht genau dort, wo die Vorführung endet
+  const degrees = Math.round((2 * Math.acos(Math.min(1, Math.abs(turn.w))) * 180) / Math.PI)
+  animateLayFlat(meshes, center, turn, before - after, () => {
+    host.send({ type: 'transform', part, matrix })
+    showLayFlatResult((labels['transform.layFlatDone'] || 'Turned by {0}° · the face now lies at the bottom').replace('{0}', String(degrees)))
+  })
+  return true
+}
+
+/** Drehung um [center] mit der Höhenkorrektur [lift] in 450 ms vorführen, danach [done]. */
+function animateLayFlat(meshes, center, turn, lift, done) {
+  const start = meshes.map((mesh) => ({ mesh, world: mesh.matrixWorld.clone(), auto: mesh.matrixAutoUpdate }))
+  const began = performance.now()
+  const identity = new Quaternion()
+  const step = () => {
+    const t = Math.min(1, (performance.now() - began) / 450)
+    const eased = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
+    const q = identity.clone().slerp(turn, eased)
+    const world = new Matrix4().makeTranslation(center.x, center.y, center.z + lift * eased)
+      .multiply(new Matrix4().makeRotationFromQuaternion(q))
+      .multiply(new Matrix4().makeTranslation(-center.x, -center.y, -center.z))
+    for (const { mesh, world: original } of start) {
+      if (!mesh.parent) continue
+      mesh.matrixAutoUpdate = false
+      mesh.matrix.copy(mesh.parent.matrixWorld.clone().invert().multiply(world).multiply(original))
+      mesh.matrixWorldNeedsUpdate = true
+    }
+    requestRender()
+    if (t < 1) requestAnimationFrame(step)
+    else done()
+  }
+  requestAnimationFrame(step)
+}
+
+/** Kurze Rückmeldung oben, wo sonst der Hinweis des Klick-Modus steht (3 s). */
+function showLayFlatResult(text) {
+  clearTimeout(layFlatHintTimer)
+  layFlatHint.textContent = text
+  layFlatHint.hidden = false
+  layFlatHintTimer = setTimeout(() => { if (!layFlat.on) layFlatHint.hidden = true }, 3000)
+}
+
 function applyTransform(kind, mode, values, position) {
   const root = fileRoot()
   if (!root) return
@@ -2782,7 +3920,7 @@ function previewColor({ key, color }) {
 let partsDown = null
 renderer.domElement.addEventListener('pointerdown', (event) => { partsDown = { x: event.clientX, y: event.clientY } })
 renderer.domElement.addEventListener('pointerup', (event) => {
-  if (!palette || palette.parts === false || measure.on || !partsDown || event.button !== 0 || !model) return
+  if (!palette || palette.parts === false || measure.on || layFlat.on || !partsDown || event.button !== 0 || !model) return
   const moved = Math.hypot(event.clientX - partsDown.x, event.clientY - partsDown.y)
   partsDown = null
   if (moved > 4) return

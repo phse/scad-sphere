@@ -64,7 +64,11 @@ enum class ExportFormat(val extension: String, val label: String, val is3d: Bool
         /** Format des letzten Vorschau-Ergebnisses einer .scad-Datei (`3mf` oder `svg`), für die Auswahl der Formate. */
         val LAST_RENDER_FORMAT = Key.create<String>("scadsphere.lastRenderFormat")
 
+        /** Modelle, die OpenSCAD per `import()` liest (Umwandeln, neue .scad-Datei) */
         val MODEL_EXTENSIONS = setOf("stl", "3mf", "obj", "off", "amf")
+
+        /** Nur im Viewer: OpenSCAD kann sie nicht importieren */
+        val VIEW_ONLY_EXTENSIONS = setOf("gltf", "glb", "ply")
 
         fun byExtension(extension: String?): ExportFormat? = entries.find { it.extension.equals(extension, ignoreCase = true) }
 

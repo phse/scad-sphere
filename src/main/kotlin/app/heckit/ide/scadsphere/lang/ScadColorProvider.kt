@@ -90,6 +90,12 @@ class ScadColorProvider : ElementColorProvider {
             return Color(v[0], v[1], v[2], v.getOrElse(3) { 255 })
         }
 
+        /** Name einer Farbe (`4682b4` → `steelblue`), wenn es einen gibt; bei Doppelten (gray/grey) der erste. */
+        fun nameOf(hex: String): String? {
+            val key = hex.removePrefix("#").lowercase().take(6)
+            return NAMES.entries.firstOrNull { it.value == key }?.key
+        }
+
         /** SVG/CSS-Farbnamen, wie OpenSCAD sie kennt */
         private val NAMES: Map<String, String> = """
             aliceblue f0f8ff antiquewhite faebd7 aqua 00ffff aquamarine 7fffd4 azure f0ffff beige f5f5dc bisque ffe4c4
