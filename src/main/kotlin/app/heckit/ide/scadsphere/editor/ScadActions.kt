@@ -15,6 +15,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileTypes.FileTypeRegistry
 import com.intellij.openapi.options.ShowSettingsUtil
@@ -27,7 +28,7 @@ import com.intellij.openapi.fileChooser.FileSaverDescriptor
 
 internal fun AnActionEvent.splitEditor(): ScadSplitEditor? =
     getData(PlatformCoreDataKeys.FILE_EDITOR) as? ScadSplitEditor
-        ?: project?.let { project -> getData(CommonDataKeys.VIRTUAL_FILE)?.let { FileEditorManager.getInstance(project).getSelectedEditor(it) } } as? ScadSplitEditor
+        ?: project?.let { project -> getData(CommonDataKeys.VIRTUAL_FILE)?.let { project.service<FileEditorManager>().getSelectedEditor(it) } } as? ScadSplitEditor
 
 internal fun AnActionEvent.scadFile(): VirtualFile? =
     getData(CommonDataKeys.VIRTUAL_FILE)?.takeIf { FileTypeRegistry.getInstance().isFileOfType(it, ScadFileType) }

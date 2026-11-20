@@ -61,7 +61,7 @@ loop or `let` it lives in).
   function, calls that leave out a parameter without default value, deprecated or removed modules and arguments
   (`assign`, `child`, `import_stl`, `filename =`, `triangles =`, …).
 - **Quick fixes and intentions** (⌥⏎ / Alt+Enter): create an unknown module or function, remove an unused variable or
-  `use`, replace a deprecated name, highlight with `#` or remove it, inline a variable, extract the selected statements into a module (local names
+  `use`, replace a deprecated name, highlight with `#` or remove it, inline a variable, extract the selected statements into a module (also via *Refactor | Extract | Method…*, ⌥⌘M / Ctrl+Alt+M; local names
   become parameters).
 - **Make Customizer parameter** (intention on a number): adds `name = 12; // [0:50]` after the last Customizer parameter
   of the file (or at the top) and puts the name in place of the number. The name comes from the parameter the number is
@@ -165,8 +165,24 @@ also used for the preview)
   wall, the whole wall; shows the area and the perimeter (all edges at the rim of the selection) and highlights it.
   Shift+click adds more faces or removes them again. Esc clears the measurement.
 - **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled and hatched.
+- **Split for printing** (scissors in the section bar, in the preview and for `.stl`, `.3mf`, `.off`, `.amf` and
+  `.obj`): creates `<name>-split.scad` next to the file and opens it. It includes the model in a module `model()` (the
+  `.scad` with `include` plus the current Customizer values, a mesh file with `import()`), and the Customizer parameter
+  `part` shows the lower half, the upper half, the pins or all of them. Both halves get holes for the pins (diameter
+  plus clearance, half the pin length deep). The pins are placed in the section where there is at least 1.6 mm of
+  material around them: two per piece as far apart as possible (one in small pieces), 5 mm thick or thinner if there
+  is no room, at most 1.5 times as long as the thinner half is deep. All values are parameters of the new file; export
+  each part, or all at once with *3MF for Multi-Color Print…* by the values of `part`. A `.scad` that uses `use <…>`
+  cannot be included in a module (OpenSCAD allows `use` only at the top level): then the evaluated CSG tree is saved
+  as `<name>-split.csg` next to it and included instead - split again after changing the model.
+- **Dimensions** (*Display* menu): width, depth and height of the bounding box as dimension lines at the front edge,
+  the right edge and the front right corner. **Keep this measurement** (ruler menu) leaves the current measurement
+  with its value in the view; *Remove kept measurements* clears them (also when another file is opened). Labels keep
+  their size on screen and are part of the saved PNG of the view.
 - **Print check** (nozzle button): faces pointing down more steeply than the overhang angle (45° by default, adjustable)
-  in red with their area - they need supports; faces lying on the bed in green with their area; open edges and edges
+  in red with their area - they need supports; faces lying on the bed in green with their area; walls thinner than the
+  minimum thickness (0.8 mm by default, 0 turns it off) in purple with their area - from the middle of every face a ray
+  goes straight into the material and the wall is thin where it leaves the material again sooner; open edges and edges
   shared by more than two faces drawn in red, also through the model; volume, weight and length of 1.75 mm filament for
   a solid print, with the density of PLA, PETG, ABS, ASA, TPU, PA or PC. Edges are counted over the whole model, so parts
   that share an edge show up as edges with more than two faces, and the underside of a part resting on another one (an
@@ -177,8 +193,10 @@ also used for the preview)
   filter from 15 parts on. Click a part in the list or the view to select it; click a swatch to pick a new color (OBJ:
   `Kd` in the `.mtl`, created if missing; 3MF: `basematerials` or color groups; AMF: materials and object colors).
   A selected part can be renamed, deleted, get a material of its own or be assigned to another material (also by
-  dragging it onto the material). For slicer project files (Bambu Studio, OrcaSlicer) a hint says the slicer may keep
-  its own filament colors.
+  dragging it onto the material). 3MF files with part settings (`Metadata/model_settings.config`: Bambu Studio and
+  OrcaSlicer projects, the multi-color export) show every part in the color of its filament: from the filament colors
+  of the project, for parts of the multi-color export named after a color in that color, otherwise one color per
+  filament. For slicer project files a hint says the slicer keeps its own filament colors.
 - **Transform** (OBJ, 3MF, AMF, STL, OFF): move, rotate and scale the selected part or the whole model - relative or
   absolute, per axis or uniformly - around an origin chosen per axis (min, center, max); rows can be shown or hidden.
   The axes are those of the file (with Y up, Y is the height). OBJ vertices shared with other parts are copied; 3MF
@@ -208,7 +226,7 @@ three tools. They use the OpenSCAD, the library folders and the backend from the
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
-| `scad_render` | `filePath` (`.scad` or mesh file), `views` (`iso`, `top`, `bottom`, `front`, `back`, `right`, `left`; default `iso`), `parameters` (`name=value` per line), `parameterSet`, `imageSize` (default 800), `outputDir` | result (ok, failed, empty, 2D), size and bounding box in mm, triangles, volume, surface, errors/warnings/`echo` with line, paths of the PNG images |
+| `scad_render` | `filePath` (`.scad` or mesh file), `views` (`iso`, `top`, `bottom`, `front`, `back`, `right`, `left`; default `iso`), `parameters` (`name=value` per line), `parameterSet`, `imageSize` (default 800), `outputDir` | result (ok, failed, empty, 2D), size and bounding box in mm, triangles, volume, surface, overhangs for printing along +Z (faces more than 45° from vertical facing down and not on the bed: area, share of the surface, height range, lowest point, flat undersides), errors/warnings/`echo` with line, paths of the PNG images |
 | `scad_parameters` | `filePath` | Customizer parameters (type, default, range or options, group, description) and the names of the parameter sets |
 | `scad_export` | `filePath`, `targetPath` (format from the extension), `parameters`, `parameterSet` | exported file, errors and warnings |
 
@@ -304,6 +322,7 @@ project with its own `screenshots.txt`.
 | `render/EchoLines.kt`, `lang/ScadEchoLinePainter.kt` | Line markers inside `echo(…)` for the preview run, and the values at the end of the line |
 | `lang/ScadModuleLineMarker.kt` | Gutter icon to show a single module in the preview |
 | `render/ColorParts.kt`, `export/MultiPart3mf.kt`, `export/MultiColorExport.kt` | Multi-color 3MF: split the CSG tree by color, read OpenSCAD's 3MF, write one object with parts and filaments, the dialog |
+| `export/SplitForPrint.kt` | Split for printing: the generated `.scad` (halves, holes, pins), live `include` or CSG snapshot when the model uses `use` |
 | `render/MeshStats.kt` | Bounding box, triangles, volume and surface of an STL (for the MCP tools) |
 | `mcp/ScadToolset.kt` | MCP tools `scad_render`, `scad_parameters`, `scad_export`; only loaded with the IDE's MCP server plugin (`META-INF/scadsphere-mcp.xml`) |
 | `render/Slicer.kt` | Finding installed slicers and opening a file in them |
@@ -321,6 +340,7 @@ project with its own `screenshots.txt`.
 | `editor/ScadPreviewEditor.kt` | Split editor and preview: when to render, keeping the camera, navigation from messages |
 | `editor/ModelFileEditor.kt` | Viewer for `.stl`, `.3mf`, `.obj`, `.off`, `.amf` with the convert toolbar |
 | `web/src/viewer.js` | three.js scene: loaders (STL, 3MF, OBJ, AMF, OpenSCAD's SVG), colors or monochrome, camera, grid, edges, toolbar, messages, print check (`analyzePrint`) |
+| `web/src/filaments.js`, `web/src/thinWalls.js`, `web/src/splitPins.js` | Filament colors of multi-color 3MF files, thin walls (rays in a BVH), section and pin positions for splitting |
 | `web/src/offLoader.js` | OFF with colors per face, as OpenSCAD writes it |
 
 Since 2026.x JCEF renders off-screen and a non-passive `wheel` listener makes Chromium wait for the page on every

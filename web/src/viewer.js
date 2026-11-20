@@ -5,7 +5,7 @@ import {
   AmbientLight, BackSide, Box3, BufferGeometry, Color, DirectionalLight, DoubleSide, EdgesGeometry, Float32BufferAttribute,
   FrontSide, GridHelper, Group, Line, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial, MeshPhongMaterial, Object3D, Points, PointsMaterial,
   OrthographicCamera, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, Scene, ShapeGeometry, ShapePath, Sphere, SphereGeometry,
-  Vector2, Vector3, WebGLRenderer, Euler, Matrix4, Quaternion,
+  Vector2, Vector3, WebGLRenderer, Euler, Matrix4, Quaternion, CanvasTexture, Sprite, SpriteMaterial, SRGBColorSpace,
 } from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
@@ -16,6 +16,9 @@ import { AMFLoader } from 'three/addons/loaders/AMFLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js'
 import { parseOff } from './offLoader.js'
+import { readFilaments, applyFilaments } from './filaments.js'
+import { findThinWalls } from './thinWalls.js'
+import { sectionSegments, placePins } from './splitPins.js'
 
 // OpenSCAD und Slicer denken mit Z nach oben.
 Object3D.DEFAULT_UP.set(0, 0, 1)
@@ -36,6 +39,8 @@ const settings = {
   transformOrigin: ['mid', 'mid', 'min'],
   printAngle: 45,
   printMaterial: 'PLA',
+  printMinWall: 0.8,
+  dimensions: false,
   ...readStored(),
 }
 
@@ -105,6 +110,7 @@ function requestRender() {
   renderPending = true
   requestAnimationFrame(() => {
     renderPending = false
+    updateLabelScales()
     renderer.render(scene, camera)
     updateMeasureLabel()
   })
@@ -145,6 +151,7 @@ async function load({ url, format, keepCamera, overlayUrl, mtl, resourceBase, fi
   if (fileKey !== undefined && fileKey !== currentFileKey) {
     currentFileKey = fileKey
     hiddenParts.clear()
+    clearKept()
     upAxis = ['x', 'y', 'z'].includes(up) ? up : 'z'
   }
   let response
@@ -279,8 +286,13 @@ function parse(format, data, extra = {}) {
       // Farbige Binär-STL (VisCAM/Magics) bringen Farben je Dreieck mit
       return single(geometry, geometry.hasColors)
     }
-    case '3mf':
-      return styleLoaded(new ThreeMFLoader().parse(data))
+    case '3mf': {
+      const group = styleLoaded(new ThreeMFLoader().parse(data))
+      // Mehrfarb-3MF (Slicer-Projekt oder eigener Export): Teile nach ihrem Filament einfärben
+      applyFilaments(group, readFilaments(data), (color, extruder) =>
+        new MeshPhongMaterial({ color, side: DoubleSide, flatShading: true, shininess: 12, name: `Filament ${extruder}` }))
+      return group
+    }
     case 'amf': {
       // Teile der AMF sind Objekte (Gruppen); ihre Meshes tragen den Namen des Objekts
       const group = styleLoaded(new AMFLoader().parse(data))
@@ -549,6 +561,7 @@ function setModel(object, keepCamera) {
   if (settings.edges) buildEdges()
   updateInfo()
   clearMeasure()
+  buildDimensions()
   updateSectionRange()
   applySection()
   if (!keepCamera) fit('iso', false)
@@ -718,7 +731,10 @@ const directions = {
 }
 
 function fit(direction, animate = true) {
-  const sphere = hasModel ? bounds.getBoundingSphere(new Sphere()) : new Sphere(new Vector3(), 50)
+  // Mit eingeblendeten Maßen auch diese ins Bild
+  const box = hasModel ? bounds.clone() : null
+  if (box && dimensions) box.expandByObject(dimensions)
+  const sphere = box ? box.getBoundingSphere(new Sphere()) : new Sphere(new Vector3(), 50)
   const radius = Math.max(sphere.radius, 0.5)
   // Der engere der beiden Blickwinkel entscheidet (hohe, schmale Vorschau neben dem Editor)
   const vertical = (perspective.fov * Math.PI) / 360
@@ -829,6 +845,9 @@ const icons = {
   more: '<path d="M4 4.5 7.5 8 4 11.5M8.5 4.5 12 8l-3.5 3.5"/>',
   image: '<path d="M2 5.5a1 1 0 0 1 1-1h2l1-1.5h4l1 1.5h2a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><circle cx="8" cy="8.5" r="2.4"/>',
   print: '<path d="M5.5 2h5v2.5l-1.5 2h-2l-1.5-2z"/><path d="M8 6.5v1.5"/><path d="M2 13.5h12M3.5 11h9" />',
+  dimensions: '<path d="M2 13.5h12M2 12v3M14 12v3M2.5 2.5v8M1 2.5h3M1 10.5h3"/><rect x="6" y="3" width="6.5" height="6.5" rx=".5" opacity=".6"/>',
+  pin: '<path d="M6 2h4l-.6 4 2.1 2.2H4.5L6.6 6z"/><path d="M8 8.2V14"/>',
+  unpin: '<path d="M6 2h4l-.6 4 2.1 2.2H4.5L6.6 6z"/><path d="M8 8.2V14M2.5 2.5l11 11"/>',
   colors: '<circle cx="5.9" cy="6" r="3.4"/><circle cx="10.1" cy="6" r="3.4"/><circle cx="8" cy="9.8" r="3.4"/>',
 }
 
@@ -895,6 +914,8 @@ function setUp(axis) {
   if (settings.edges) buildEdges()
   updateInfo()
   clearMeasure()
+  clearKept()
+  buildDimensions()
   updateSectionRange()
   applySection()
   fit('iso', false)
@@ -911,6 +932,9 @@ const measureItems = [
   { name: 'measureDiameter', action: () => setMeasureMode('diameter'), isOn: () => measure.on && measure.mode === 'diameter' },
   { name: 'measureHole', action: () => setMeasureMode('hole'), isOn: () => measure.on && measure.mode === 'hole' },
   { name: 'measureArea', action: () => setMeasureMode('area'), isOn: () => measure.on && measure.mode === 'area' },
+  // Ergebnis stehen lassen (auch im Bild der Ansicht), dann weiter messen
+  { name: 'measureKeep', icon: 'pin', action: () => keepMeasure(), enabled: () => !!measure.keepText },
+  { name: 'measureClearKept', icon: 'unpin', action: () => clearKept(), enabled: () => kept.children.length > 0 },
 ]
 
 const upItems = [
@@ -924,6 +948,7 @@ const displayItems = [
   { name: 'edges', action: toggleEdges, isOn: () => settings.edges },
   { name: 'ortho', action: toggleOrtho, isOn: () => settings.ortho },
   { name: 'grid', action: () => { settings.grid = !settings.grid; store(); updateGrid(); updateToolbar() }, isOn: () => settings.grid },
+  { name: 'dimensions', action: () => setDimensions(!settings.dimensions), isOn: () => settings.dimensions, enabled: () => hasModel },
   { name: 'bed', action: toggleBed, isOn: () => settings.bed, enabled: () => !!bed?.enabled },
 ]
 
@@ -1482,6 +1507,7 @@ function addMeasurePoint(point) {
 
 function updateMeasureLabel() {
   updateMeasureHint()
+  measure.keepText = null
   if (measure.points.length !== measureNeeds()) {
     measureLabel.hidden = true
     return
@@ -1540,6 +1566,8 @@ function updateMeasureLabel() {
     detail = `Δx ${number(Math.abs(d.x))} · Δy ${number(Math.abs(d.y))} · Δz ${number(Math.abs(d.z))}`
     anchor = a.clone().add(b).multiplyScalar(0.5)
   }
+  measure.keepText = text === '–' ? null : text
+  measure.keepAnchor = anchor.clone()
   measureLabel.innerHTML = ''
   measureLabel.classList.toggle('side', measure.mode === 'hole' || measure.mode === 'area')
   const main = document.createElement('div')
@@ -1559,6 +1587,147 @@ function updateMeasureLabel() {
     const overflow = box.right - (rect.left + rect.width - 8)
     if (overflow > 0) measureLabel.style.left = `${parseFloat(measureLabel.style.left) - overflow}px`
   }
+}
+
+// --- Bemaßung und behaltene Messungen: Linien und Schilder in der Szene (Sprites), so stehen sie auch im Bild der Ansicht ---
+
+const labelSprites = new Set()
+let dimensions = null
+const kept = new Group()   // behaltene Messungen, je eine Gruppe aus Punkten, Linien und Schild
+scene.add(kept)
+
+/** Schild mit [text] als Sprite; die Größe in Pixeln hält updateLabelScales bei jedem Zoom gleich. */
+function makeLabel(text) {
+  const ratio = Math.max(2, window.devicePixelRatio || 1)
+  const fontSize = (theme.fontSize || 12) * ratio
+  const font = `${fontSize}px ${theme.font && !theme.font.startsWith('.') ? `"${theme.font}", ` : ''}system-ui, sans-serif`
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+  context.font = font
+  const width = Math.ceil(context.measureText(text).width + 14 * ratio)
+  const height = Math.ceil(fontSize + 8 * ratio)
+  canvas.width = width
+  canvas.height = height
+  context.font = font
+  context.fillStyle = theme.panel || 'rgba(255, 255, 255, 0.92)'
+  context.strokeStyle = theme.border || '#c9ccd6'
+  context.lineWidth = ratio
+  context.beginPath()
+  context.roundRect(ratio / 2, ratio / 2, width - ratio, height - ratio, 5 * ratio)
+  context.fill()
+  context.stroke()
+  context.fillStyle = theme.fg || '#1e1f22'
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  context.fillText(text, width / 2, height / 2 + ratio / 2)
+  const texture = new CanvasTexture(canvas)
+  texture.colorSpace = SRGBColorSpace
+  const sprite = new Sprite(new SpriteMaterial({ map: texture, depthTest: false, transparent: true }))
+  sprite.userData.pixels = [width / ratio, height / ratio]
+  sprite.renderOrder = 20
+  labelSprites.add(sprite)
+  return sprite
+}
+
+function disposeGroup(group) {
+  group.traverse((child) => {
+    child.geometry?.dispose()
+    if (child.material) {
+      child.material.map?.dispose()
+      child.material.dispose()
+    }
+    if (child.isSprite) labelSprites.delete(child)
+  })
+}
+
+/** Schilder gleich groß auf dem Bildschirm, egal wie nah die Kamera ist. */
+function updateLabelScales() {
+  const at = new Vector3()
+  for (const sprite of labelSprites) {
+    sprite.getWorldPosition(at)
+    const size = worldPerPixel(at)
+    sprite.scale.set(sprite.userData.pixels[0] * size, sprite.userData.pixels[1] * size, 1)
+  }
+}
+
+function setDimensions(on) {
+  settings.dimensions = !!on
+  store()
+  buildDimensions()
+  updateToolbar()
+}
+
+/** Breite, Tiefe und Höhe als Maßlinien an der Vorderkante, rechts und an der Ecke vorne rechts. */
+function buildDimensions() {
+  if (dimensions) {
+    scene.remove(dimensions)
+    disposeGroup(dimensions)
+    dimensions = null
+  }
+  if (!settings.dimensions || !hasModel) return requestRender()
+  const { min, max } = bounds
+  const size = bounds.getSize(new Vector3())
+  const off = Math.max(size.x, size.y, size.z) * 0.08 || 1
+  const number = (value) => `${value.toLocaleString(init.locale || undefined, { maximumFractionDigits: 2 })} mm`
+  const group = new Group()
+  const points = []
+  const line = (x1, y1, z1, x2, y2, z2) => points.push(new Vector3(x1, y1, z1), new Vector3(x2, y2, z2))
+  const label = (text, x, y, z) => {
+    const sprite = makeLabel(text)
+    sprite.position.set(x, y, z)
+    group.add(sprite)
+  }
+  const z = min.z
+  // Breite (X) vor der Vorderkante, mit Hilfslinien von den Ecken
+  const front = min.y - off
+  line(min.x, min.y, z, min.x, front - off * 0.25, z)
+  line(max.x, min.y, z, max.x, front - off * 0.25, z)
+  line(min.x, front, z, max.x, front, z)
+  label(number(size.x), (min.x + max.x) / 2, front, z)
+  // Tiefe (Y) rechts daneben
+  const right = max.x + off
+  line(max.x, min.y, z, right + off * 0.25, min.y, z)
+  line(max.x, max.y, z, right + off * 0.25, max.y, z)
+  line(right, min.y, z, right, max.y, z)
+  label(number(size.y), right, (min.y + max.y) / 2, z)
+  // Höhe (Z) an der Ecke vorne rechts (nicht bei flachen Modellen)
+  if (size.z > 1e-9) {
+    const cx = max.x + off * 0.7, cy = min.y - off * 0.7
+    line(max.x, min.y, max.z, cx + off * 0.2, cy - off * 0.2, max.z)
+    line(cx, cy, min.z, cx, cy, max.z)
+    label(number(size.z), cx, cy, (min.z + max.z) / 2)
+  }
+  const lines = new LineSegments(new BufferGeometry().setFromPoints(points),
+    new LineBasicMaterial({ color: theme.dark ? '#c9ccd6' : '#3b3e45', depthTest: false, transparent: true, opacity: 0.8 }))
+  lines.renderOrder = 15
+  group.add(lines)
+  dimensions = group
+  scene.add(group)
+  requestRender()
+}
+
+/** Laufende Messung stehen lassen: Punkte, Linien und ein Schild mit dem Ergebnis bleiben, bis sie entfernt werden. */
+function keepMeasure() {
+  if (!measure.marker || !measure.keepText) return
+  const group = measure.marker
+  measure.marker = null
+  const sprite = makeLabel(measure.keepText)
+  sprite.position.copy(measure.keepAnchor)
+  group.add(sprite)
+  kept.add(group)
+  clearMeasure()
+  updateMeasureHint()
+  updateToolbar()
+  requestRender()
+}
+
+function clearKept() {
+  for (const group of [...kept.children]) {
+    kept.remove(group)
+    disposeGroup(group)
+  }
+  updateToolbar()
+  requestRender()
 }
 
 // --- Loch oder Zapfen mit einem Klick: zusammenhängende, glatt gekrümmte Wand um den Treffer, darauf ein Zylinder ---
@@ -2495,7 +2664,8 @@ sectionPanel.innerHTML = `
   <span class="axes"><button type="button" data-axis="x">X</button><button type="button" data-axis="y">Y</button><button type="button" data-axis="z">Z</button></span>
   <input type="range" min="0" max="1000" step="1">
   <span class="value"></span>
-  <button type="button" class="flip"></button>`
+  <button type="button" class="flip"></button>
+  <button type="button" class="split" hidden></button>`
 document.body.appendChild(sectionPanel)
 const sectionSlider = sectionPanel.querySelector('input')
 sectionPanel.querySelector('.flip').dataset.tip = labels['section.flip'] || 'Show the other side'
@@ -2504,6 +2674,73 @@ for (const button of sectionPanel.querySelectorAll('[data-axis]')) {
   button.addEventListener('click', () => { section.axis = button.dataset.axis; section.fraction = 0.5; updateSectionRange(); applySection() })
 }
 sectionPanel.querySelector('.flip').addEventListener('click', () => { section.flip = !section.flip; applySection() })
+const splitButton = sectionPanel.querySelector('.split')
+splitButton.dataset.tip = labels['section.split'] || 'Split here for printing (two parts with pins)…'
+splitButton.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"><circle cx="4" cy="4.5" r="2"/><circle cx="4" cy="11.5" r="2"/><path d="M5.7 5.6 14 11.5M5.7 10.4 14 4.5"/></svg>'
+splitButton.addEventListener('click', () => requestSplit())
+/** Wie ein Klick auf die Schere: Schnitt samt Stiftstellen an das Plugin schicken. */
+function requestSplit() {
+  const request = computeSplit()
+  if (request) host.send({ type: 'split', ...request })
+}
+
+/** Das Plugin bietet „Hier teilen“ an (Vorschau einer .scad oder Netzdatei, die OpenSCAD importieren kann). */
+function setSplit(enabled) {
+  splitButton.hidden = !enabled
+}
+
+/**
+ * Schnitt für „Hier teilen“ in Koordinaten der Datei: Achse und Lage der Ebene, Ausdehnung und Stifte in der Schnittfläche
+ * (Durchmesser 5 mm, bei zu wenig Platz kleiner). Die Szene ist gegenüber der Datei nur um 90°-Schritte gedreht (Achse oben),
+ * die Ebene bleibt also achsparallel.
+ */
+function computeSplit() {
+  if (!model || !section.on) return null
+  model.updateMatrixWorld(true)
+  const toFile = model.matrixWorld.clone().invert()
+  const tris = []
+  const p = new Vector3()
+  const matrix = new Matrix4()
+  model.traverse((child) => {
+    if (!child.isMesh || !child.visible) return
+    const position = child.geometry.attributes.position
+    if (!position) return
+    const index = child.geometry.index
+    const count = index ? index.count : position.count
+    matrix.multiplyMatrices(toFile, child.matrixWorld)
+    for (let i = 0; i < count; i++) {
+      p.fromBufferAttribute(position, index ? index.getX(i) : i).applyMatrix4(matrix)
+      tris.push(p.x, p.y, p.z)
+    }
+  })
+  if (!tris.length) return null
+  const sceneAxis = { x: 0, y: 1, z: 2 }[section.axis]
+  const direction = new Vector3().setComponent(sceneAxis, 1).transformDirection(toFile)
+  const components = [Math.abs(direction.x), Math.abs(direction.y), Math.abs(direction.z)]
+  const axis = components.indexOf(Math.max(...components))
+  const value = new Vector3().setComponent(sceneAxis, section.value).applyMatrix4(toFile).getComponent(axis)
+  const min = [Infinity, Infinity, Infinity]
+  const max = [-Infinity, -Infinity, -Infinity]
+  for (let i = 0; i < tris.length; i++) {
+    const k = i % 3
+    if (tris[i] < min[k]) min[k] = tris[i]
+    if (tris[i] > max[k]) max[k] = tris[i]
+  }
+  const segments = sectionSegments(tris, axis, value)
+  // Tiefe der Löcher: höchstens drei Viertel der dünneren Hälfte
+  const depth = Math.min(value - min[axis], max[axis] - value)
+  let pins = []
+  let pinD = 5
+  let pinLength = 0
+  for (const d of [5, 4, 3, 2]) {
+    const length = Math.floor(Math.min(4 * d, 1.5 * depth) * 2) / 2
+    if (length < d) continue
+    const placed = placePins(segments, d)
+    if (placed.pins.length) { pins = placed.pins; pinD = d; pinLength = length; break }
+  }
+  if (!pins.length) pinLength = Math.max(Math.floor(Math.min(20, 1.5 * depth) * 2) / 2, 2)
+  return { axis, value: Math.round(value * 1000) / 1000, min, max, pins, pinD, pinLength }
+}
 sectionSlider.addEventListener('input', () => {
   section.fraction = Number(sectionSlider.value) / 1000
   updateSectionRange()
@@ -2662,6 +2899,7 @@ const MATERIALS = { PLA: 1.24, PETG: 1.27, ABS: 1.04, ASA: 1.07, TPU: 1.21, PA: 
 const FILAMENT_AREA = Math.PI * 0.875 ** 2   // 1,75 mm
 const OVERHANG_COLOR = '#e5484d'
 const CONTACT_COLOR = '#30a46c'
+const THIN_COLOR = '#8e4ec6'
 const print = { on: false, result: null, timer: null }
 let printOverlay = null
 
@@ -2703,7 +2941,7 @@ const modelIsFlat = () => !hasModel || bounds.max.z - bounds.min.z < 1e-9 || tri
 
 function runPrintCheck() {
   removePrintOverlay()
-  print.result = model && !modelIsFlat() ? analyzePrint(model, Number(settings.printAngle) || 45) : null
+  print.result = model && !modelIsFlat() ? analyzePrint(model, Number(settings.printAngle) || 45, Number(settings.printMinWall) || 0) : null
   if (print.result) {
     printOverlay = buildPrintOverlay(print.result)
     scene.add(printOverlay)
@@ -2718,7 +2956,7 @@ function runPrintCheck() {
  * alle Meshes zusammen: Der 3MF-Loader teilt ein Objekt je Farbe/Material in mehrere Meshes, deren Grenzen sonst als offene
  * Kanten gälten (OpenSCAD-Vorschau, 2026-11-19).
  */
-function analyzePrint(object, angle) {
+function analyzePrint(object, angle, minWall = 0) {
   object.updateMatrixWorld(true)
   const minZ = bounds.min.z
   const size = bounds.getSize(new Vector3()).length()
@@ -2732,6 +2970,9 @@ function analyzePrint(object, angle) {
   let contactArea = 0
   let open = 0
   let nonManifold = 0
+  // Für die Wanddicke: alle Dreiecke mit ihrer Normalen
+  const tris = []
+  const normals = []
   const a = new Vector3(), b = new Vector3(), c = new Vector3(), ab = new Vector3(), ac = new Vector3(), n = new Vector3()
   // Gleiche Punkte zusammenfassen (STL wiederholt jeden Punkt je Dreieck)
   const quantum = Math.max(size * 1e-7, 1e-7)
@@ -2771,6 +3012,10 @@ function analyzePrint(object, angle) {
         n.divideScalar(doubleArea)
         if (sign < 0) n.negate()
         const area = doubleArea / 2
+        if (minWall > 0) {
+          tris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z)
+          normals.push(n.x, n.y, n.z)
+        }
         const onBed = Math.max(a.z, b.z, c.z) - minZ < flatEps
         if (onBed && n.z < -0.99) {
           contactArea += area
@@ -2792,22 +3037,32 @@ function analyzePrint(object, angle) {
     else nonManifold++
     openEdges.push(...edgeEnds.get(key))
   }
-  return { volume: Math.abs(volume), overhangArea, contactArea, open, nonManifold, overhang, contact, openEdges, angle }
+  // Zu dünne Wände (nur bei geschlossener Oberfläche sinnvoll; offene Netze haben kein Innen)
+  const thin = []
+  let thinArea = 0
+  if (minWall > 0 && tris.length) {
+    const found = findThinWalls(tris, normals, minWall)
+    thinArea = found.area
+    for (const t of found.thin) for (let k = 0; k < 9; k++) thin.push(tris[t * 9 + k])
+  }
+  return { volume: Math.abs(volume), overhangArea, contactArea, open, nonManifold, overhang, contact, openEdges, angle, thin, thinArea, minWall }
 }
 
 function buildPrintOverlay(result) {
   const group = new Group()
-  const surface = (positions, color) => {
+  const surface = (positions, color, offset = -2) => {
     if (!positions.length) return
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
     geometry.computeVertexNormals()
     // Knapp vor dem Modell zeichnen, damit die Fläche nicht flimmert
-    const material = new MeshPhongMaterial({ color, flatShading: true, side: DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
+    const material = new MeshPhongMaterial({ color, flatShading: true, side: DoubleSide, polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset })
     group.add(new Mesh(geometry, material))
   }
   surface(result.overhang, OVERHANG_COLOR)
   surface(result.contact, CONTACT_COLOR)
+  // Dünne Wände über den Überhängen (eine Stelle kann beides sein, die dünne Wand ist das größere Problem)
+  surface(result.thin, THIN_COLOR, -4)
   if (result.openEdges.length) {
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new Float32BufferAttribute(result.openEdges, 3))
@@ -2870,6 +3125,26 @@ function renderPrintPanel() {
     }
   }
   row(CONTACT_COLOR, escape(format('print.contact', 'On the bed: {0}', area(result.contactArea))), labels['print.contactTip'])
+
+  // Dünne Wände mit einstellbarer Mindestdicke (0 = aus)
+  const thinRow = row(THIN_COLOR, '', labels['print.thinTip'])
+  if (result.thinArea > 0) thinRow.classList.add('problem')
+  const thinText = thinRow.lastChild
+  for (const part of (labels['print.thin'] || 'Walls under {0} mm: {1}').split(/(\{[01]\})/)) {
+    if (part === '{0}') {
+      const input = Object.assign(document.createElement('input'), { type: 'number', min: '0', max: '10', step: '0.1', value: String(result.minWall), className: 'print-angle' })
+      input.addEventListener('change', () => {
+        settings.printMinWall = Math.min(10, Math.max(0, Number(String(input.value).replace(',', '.')) || 0))
+        store()
+        runPrintCheck()
+      })
+      thinText.appendChild(input)
+    } else if (part === '{1}') {
+      thinText.appendChild(document.createTextNode(result.minWall > 0 ? area(result.thinArea) : (labels['print.off'] || 'off')))
+    } else {
+      thinText.appendChild(document.createTextNode(part))
+    }
+  }
   const closed = result.open === 0 && result.nonManifold === 0
   const edgeText = closed ? (labels['print.closed'] || 'Closed surface')
     : [result.open ? format('print.open', '{0} open edges', result.open) : null, result.nonManifold ? format('print.nonManifold', '{0} edges with more than two faces', result.nonManifold) : null].filter(Boolean).join(' · ')
@@ -3002,6 +3277,7 @@ function setTheme(next) {
   updateGrid()
   updateBed()
   rebuildCaps()
+  buildDimensions()
   requestRender()
 }
 
@@ -3026,6 +3302,7 @@ function store() {
 // --- Bild für Screenshots/Export ---
 
 function snapshot() {
+  updateLabelScales()
   renderer.render(scene, camera)
   return renderer.domElement.toDataURL('image/png')
 }
@@ -3073,6 +3350,11 @@ function setSection(next) {
 /** Für Screenshots und Tests: Messung zwischen zwei Punkten ([x, y, z]) zeigen. */
 /** Messpunkte vorgeben (Screenshots, Tests): Liste von Punkten (Abstand) oder { mode, points }. */
 function setMeasure(value) {
+  // false: Messen beenden (behaltene Messungen bleiben)
+  if (value === false) {
+    if (measure.on) toggleMeasure()
+    return
+  }
   const points = Array.isArray(value) ? value : value?.points
   measure.mode = (!Array.isArray(value) && value?.mode) || 'distance'
   clearMeasure()
@@ -3936,7 +4218,7 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   select(hit?.object.name || null)
 })
 
-window.scadSphere = { setCaret, load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform, setPrint }
+window.scadSphere = { setSplit, computeSplit, requestSplit, setDimensions, keepMeasure, clearKept, setCaret, load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform, setPrint }
 
 if (init.theme) setTheme(init.theme)
 else scene.background = new Color('#f7f8fa')

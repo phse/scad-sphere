@@ -96,6 +96,20 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.8.0</h3>
+            <ul>
+              <li>Split for printing: a button in the section view creates a .scad next to the model with the lower half, the
+                  upper half and pins, holes for the pins in both halves, placed where there is enough material around
+                  them. Pick the part in the Customizer, or export all parts into one multi-color 3MF.</li>
+              <li>Print check: walls thinner than a minimum thickness (0.8 mm by default, adjustable) in purple with their area.</li>
+              <li>Dimensions: width, depth and height as dimension lines at the model; measurements can be kept in the
+                  view. Both also appear in the saved PNG of the view.</li>
+              <li>Multi-color 3MF files (Bambu Studio and OrcaSlicer projects, the multi-color export) show their parts in
+                  the colors of their filaments.</li>
+              <li>Refactor | Extract | Method… (⌥⌘M / Ctrl+Alt+M) extracts the selected statements into a module.</li>
+              <li>The MCP tool <code>scad_render</code> also reports the overhangs for printing: area, height range, lowest
+                  point and flat undersides that need support.</li>
+            </ul>
             <h3>1.7.0</h3>
             <ul>
               <li>Export a 3MF for multi-color print: one object with a part per color() or per value of a Customizer

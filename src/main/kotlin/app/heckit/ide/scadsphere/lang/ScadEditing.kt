@@ -20,7 +20,9 @@ import com.intellij.lang.findUsages.FindUsagesProvider
 import com.intellij.lang.refactoring.NamesValidator
 import com.intellij.lang.refactoring.RefactoringSupportProvider
 import com.intellij.lexer.Lexer
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
@@ -28,6 +30,8 @@ import com.intellij.psi.impl.search.IndexPatternBuilder
 import com.intellij.psi.tree.IElementType
 import com.intellij.psi.tree.TokenSet
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.refactoring.RefactoringActionHandler
+import com.intellij.refactoring.util.CommonRefactoringUtil
 
 class ScadBraceMatcher : PairedBraceMatcher {
     override fun getPairs(): Array<BracePair> = PAIRS
@@ -113,6 +117,20 @@ class ScadFindUsagesProvider : FindUsagesProvider {
 
 class ScadRefactoringSupportProvider : RefactoringSupportProvider() {
     override fun isMemberInplaceRenameAvailable(element: PsiElement, context: PsiElement?): Boolean = element is ScadNamedElement
+
+    /** Refactor | Extract | Method… (⌥⌘M) zieht markierte Anweisungen in ein Modul - wie die Absicht „Als Modul extrahieren“. */
+    override fun getExtractMethodHandler(): RefactoringActionHandler = ScadExtractModuleHandler
+}
+
+object ScadExtractModuleHandler : RefactoringActionHandler {
+    override fun invoke(project: Project, editor: Editor?, file: PsiFile?, dataContext: DataContext?) {
+        if (editor == null || file == null) return
+        val intention = ExtractModuleIntention()
+        if (intention.isAvailable(project, editor, file)) intention.invoke(project, editor, file)
+        else CommonRefactoringUtil.showErrorHint(project, editor, ScadSphereBundle.message("intention.extractModule.select"), intention.text, null)
+    }
+
+    override fun invoke(project: Project, elements: Array<out PsiElement>, dataContext: DataContext?) = Unit
 }
 
 class ScadNamesValidator : NamesValidator {

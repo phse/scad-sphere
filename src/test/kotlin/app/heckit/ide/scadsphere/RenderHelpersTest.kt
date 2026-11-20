@@ -109,6 +109,29 @@ class RenderHelpersTest : TestCase() {
             assertEquals(52.0, stats.area, 1e-6)
         }
         assertNull(MeshStats.ofStl("solid empty\nendsolid empty\n".toByteArray()))
+        // Unterseite liegt auf dem Bett: kein Überhang
+        assertEquals(0.0, MeshStats.ofStl(binary.array())!!.overhang.area)
+    }
+
+    /** Pilz: Stiel 2 × 2 × 10 auf dem Bett, darauf eine Platte 10 × 10 × 2 - deren Unterseite hängt in der Luft. */
+    fun testOverhang() {
+        fun box(x: Double, y: Double, z: Double, w: Double, d: Double, h: Double): String {
+            val c = listOf(
+                listOf(x, y, z), listOf(x + w, y, z), listOf(x + w, y + d, z), listOf(x, y + d, z),
+                listOf(x, y, z + h), listOf(x + w, y, z + h), listOf(x + w, y + d, z + h), listOf(x, y + d, z + h),
+            )
+            val faces = listOf(
+                listOf(0, 2, 1), listOf(0, 3, 2), listOf(4, 5, 6), listOf(4, 6, 7), listOf(0, 1, 5), listOf(0, 5, 4),
+                listOf(1, 2, 6), listOf(1, 6, 5), listOf(2, 3, 7), listOf(2, 7, 6), listOf(3, 0, 4), listOf(3, 4, 7),
+            )
+            return faces.joinToString("") { face -> " facet normal 0 0 0\n  outer loop\n" + face.joinToString("") { "   vertex ${c[it].joinToString(" ")}\n" } + "  endloop\n endfacet\n" }
+        }
+        val stl = "solid t\n" + box(4.0, 4.0, 0.0, 2.0, 2.0, 10.0) + box(0.0, 0.0, 10.0, 10.0, 10.0, 2.0) + "endsolid t\n"
+        val overhang = MeshStats.ofStl(stl.toByteArray())!!.overhang
+        assertEquals(100.0, overhang.area, 1e-6)
+        assertEquals(100.0, overhang.flatArea, 1e-6)
+        assertEquals(10.0, overhang.minZ, 1e-9)
+        assertEquals(10.0, overhang.lowest!![2], 1e-9)
     }
 
     fun testSetTarget() {

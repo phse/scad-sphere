@@ -2,6 +2,7 @@ package app.heckit.ide.scadsphere.editor
 
 import app.heckit.ide.scadsphere.ScadSphereBundle
 import app.heckit.ide.scadsphere.export.ExportFormat
+import app.heckit.ide.scadsphere.export.SplitForPrint
 import app.heckit.ide.scadsphere.viewer.ModelViewer
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionPromoter
@@ -88,6 +89,10 @@ class ModelFileEditor(private val project: Project, private val file: VirtualFil
         }
         viewer.onPalette = { action, key, part -> MeshColorEditing(project, file, viewer, root, currentPalette).handle(action, key, part) }
         viewer.onTransform = { part, matrix -> MeshColorEditing(project, file, viewer, root, currentPalette).transform(part, matrix) }
+        // Teilen per OpenSCAD-import(): nur Formate, die OpenSCAD einlesen kann
+        if (file.extension?.lowercase() in SPLIT_EXTENSIONS) {
+            viewer.onSplit = { message -> SplitForPrint.Request.of(message)?.let { SplitForPrint.create(project, file, SplitForPrint.importLine(file), it) } }
+        }
         load(keepCamera = false)
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
@@ -244,6 +249,8 @@ class ViewerUndoAction(private val perform: () -> Unit) : DumbAwareAction() {
 class ViewerUndoPromoter : ActionPromoter {
     override fun promote(actions: List<AnAction>, context: DataContext): List<AnAction> = actions.filterIsInstance<ViewerUndoAction>()
 }
+
+private val SPLIT_EXTENSIONS = setOf("stl", "3mf", "off", "amf", "obj")
 
 class ModelFileEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile): Boolean =

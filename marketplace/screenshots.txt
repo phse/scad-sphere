@@ -5,8 +5,10 @@
 04-dark: phone-stand.scad dark
 05-3mf-dark: phone-stand.3mf dark
 06-section: phone-stand.scad nocustomizer section:x:0.5
-07-print: wall-hook.scad nocustomizer print view:below
-08-module: phone-stand.scad nocustomizer module:back_rest
-09-highlight-dark: shelf-bracket.scad dark nocustomizer measure:40,0,0;40,0,40
-10-measure-ring: mounting-plate.scad nocustomizer preview measure:hole:30,9.59,7.41
-11-parts: dresser.obj up:y select:top transform
+07-split: key-rack.scad section:x:0.5 split
+08-print: wall-hook.scad nocustomizer print view:below
+09-module: phone-stand.scad nocustomizer module:back_rest
+10-highlight-dark: shelf-bracket.scad dark nocustomizer measure:40,0,0;40,0,40
+11-measure-ring: mounting-plate.scad nocustomizer preview measure:hole:30,9.59,7.41
+12-dimensions: wall-hook.scad nocustomizer preview measure:hole:2.25,2,12 keep dimensions
+13-parts: dresser.obj up:y select:top transform

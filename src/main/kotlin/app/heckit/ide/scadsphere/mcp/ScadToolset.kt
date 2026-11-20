@@ -39,7 +39,8 @@ class ScadToolset : McpToolset {
         """
         |Renders an OpenSCAD file (.scad) or a mesh file (.stl, .3mf, .obj, .off, .amf) with the OpenSCAD configured in the IDE
         |and reports what came out: errors, warnings and echo output with line numbers, the bounding box and size in mm,
-        |triangle count, volume and surface area, plus PNG images of the model from the requested views.
+        |triangle count, volume and surface area, overhangs for printing along +Z (area, height range, lowest point,
+        |flat undersides that need support), plus PNG images of the model from the requested views.
         |Use it after editing a .scad file to check that the model still renders and looks as intended: read the returned
         |image files to see the model. Unsaved editor content is used if the file is open and modified.
         """
@@ -214,6 +215,16 @@ class ScadToolset : McpToolset {
         append("Bounding box: min ").append(vector(stats.min)).append(", max ").append(vector(stats.max)).append('\n')
         append("Triangles: ").append(stats.triangles).append(", volume: ").append(number(stats.volume / 1000)).append(" cm3, surface: ")
             .append(number(stats.area / 100)).append(" cm2\n")
+        val overhang = stats.overhang
+        append("Overhangs (faces more than ").append(number(MeshStats.OVERHANG_ANGLE)).append(" degrees from vertical facing down, printed along +Z, not on the bed): ")
+        if (overhang.area == 0.0) append("none\n")
+        else {
+            append(number(overhang.area)).append(" mm2 (").append(number(100 * overhang.area / stats.area)).append("% of the surface), z ")
+                .append(number(overhang.minZ)).append(" to ").append(number(overhang.maxZ)).append(" mm")
+            overhang.lowest?.let { append(", lowest at ").append(vector(it)) }
+            append('\n')
+            if (overhang.flatArea > 0) append("  of which flat undersides (need support or bridging): ").append(number(overhang.flatArea)).append(" mm2\n")
+        }
     }
 
     private fun StringBuilder.appendMessages(messages: List<RenderMessage>, file: File) {

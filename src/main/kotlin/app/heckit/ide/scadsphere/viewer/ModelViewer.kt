@@ -70,6 +70,13 @@ class ModelViewer(parent: Disposable) : Disposable {
     /** Animationsleiste zeigen (`frame`, `steps`, `playing`) oder mit null ausblenden. */
     fun setAnimation(state: Map<String, Any>?) = call("setAnimation", state)
 
+    /** Schnitt: „Hier teilen…“ mit Achse, Lage, Ausdehnung und Stiften (Koordinaten der Datei); null blendet den Knopf aus. */
+    var onSplit: ((com.google.gson.JsonObject) -> Unit)? = null
+        set(value) {
+            field = value
+            call("setSplit", value != null)
+        }
+
     /** Klick auf einen Link im Hinweis (z. B. „settings“). */
     var onAction: ((String) -> Unit)? = null
 
@@ -253,6 +260,7 @@ class ModelViewer(parent: Disposable) : Disposable {
             "up" -> message.get("value")?.asString?.let { value ->
                 fileKey?.let { PropertiesComponent.getInstance().setValue(UP_KEY + it, value, defaultUp(shownFormat)) }
             }
+            "split" -> onSplit?.invoke(message)
             "undo" -> onUndo?.invoke(message.get("redo")?.asBoolean == true)
             "error" -> thisLogger().warn("Viewer: ${message.get("message")}")
         }
@@ -278,7 +286,7 @@ class ModelViewer(parent: Disposable) : Disposable {
         "tool.render", "tool.stop", "tool.customizer", "tool.customizer.none",
         "messages.error", "messages.warning", "messages.echo", "triangles", "points", "parseError", "noWebGl",
         "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.measureDistance", "tool.measureAngle", "tool.measureDiameter", "tool.measureHole", "measure.holeHint", "measure.noHole", "measure.hole", "measure.pin", "measure.length", "measure.cone", "measure.sphere", "measure.sphereHole", "measure.circumference", "measure.torus", "measure.torusGroove", "measure.outerInner", "measure.tube", "measure.centerline", "tool.measureArea", "measure.areaHint", "measure.perimeter", "measure.areaCount", "measure.planar", "measure.cylinderWall", "measure.coneWall", "measure.sphereWall", "measure.torusWall", "measure.collinear", "tool.section", "tool.section.none",
-        "tool.print", "tool.print.none", "print.title", "print.overhang", "print.overhangTip", "print.none", "print.contact", "print.contactTip", "print.closed", "print.open", "print.nonManifold", "print.openTip", "print.solidTip",
+        "tool.print", "tool.print.none", "print.title", "print.overhang", "print.overhangTip", "print.none", "print.contact", "print.contactTip", "print.closed", "print.open", "print.nonManifold", "print.openTip", "print.solidTip", "print.thin", "print.thinTip", "print.off", "section.split", "tool.dimensions", "tool.dimensions.none", "tool.measureKeep", "tool.measureKeep.none", "tool.measureClearKept", "tool.measureClearKept.none",
         "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
         "tool.image", "tool.image.none", "animation.play", "animation.pause", "animation.steps", "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
         "tool.parts", "tool.parts.none", "parts.title", "parts.pick", "parts.separate", "parts.empty", "parts.create", "parts.count",

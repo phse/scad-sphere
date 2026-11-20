@@ -102,6 +102,13 @@ class ScadInspectionsTest : BasePlatformTestCase() {
         "module shelf(w) {\n    part(w);\n}\n\nmodule part(w) {\n    cube([w, 20, 2]);\n    translate([0, 18, 0]) cube([w, 2, 10]);\n}\n",
     )
 
+    /** Refactor | Extract | Method… (⌥⌘M) macht dasselbe wie die Absicht. */
+    fun testExtractModuleViaExtractMethod() {
+        myFixture.configureByText(ScadFileType, "module shelf(w) {\n    <selection>cube([w, 20, 2]);</selection>\n}\n")
+        app.heckit.ide.scadsphere.lang.ScadExtractModuleHandler.invoke(project, myFixture.editor, myFixture.file, null)
+        myFixture.checkResult("module shelf(w) {\n    part(w);\n}\n\nmodule part(w) {\n    cube([w, 20, 2]);\n}\n")
+    }
+
     private fun applyParameterIntention(before: String, after: String) {
         myFixture.configureByText(ScadFileType, before)
         myFixture.launchAction(myFixture.findSingleIntention("Make Customizer parameter"))

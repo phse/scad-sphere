@@ -22,7 +22,8 @@ Parameter name hints: *Settings | Editor | Inlay Hints | Parameter names*.
 
 Icon to show a single module in the preview: *Settings | Editor | General | Gutter Icons | Show a single module in the preview*.
 
-Print check in the viewer: the overhang angle and the material are chosen in the panel and remembered.
+Print check in the viewer: the overhang angle, the minimum wall thickness (*Walls under*, 0.8 mm by default, 0 = off) and
+the material are chosen in the panel and remembered.
 
 ## Library lookup
 
@@ -129,7 +130,7 @@ eps = 0.01;
 | Create module / function | on an unknown name; parameters from the call (named arguments keep their name, others `a`, `b`, …) |
 | Highlight with # / Remove # highlight | on the name of a module call |
 | Inline variable | on a variable assigned once and only used in this file; adds parentheses where needed |
-| Extract module | on selected statements (module calls, `if`); local names from outside become parameters; not with `children()` |
+| Extract module | on selected statements (module calls, `if`), also via *Refactor \| Extract \| Method…* (⌥⌘M / Ctrl+Alt+M); local names from outside become parameters; not with `children()` |
 
 ## Live templates
 
@@ -158,8 +159,31 @@ folder (`scad-sphere/<file>.3mf`) and opened in the slicer. `.stl`, `.3mf`, `.ob
 | Distance | 2 | distance, Δx/Δy/Δz |
 | Angle | 3, the second is the vertex | angle in degrees, length of both legs |
 | Diameter | 3 on a circle (e.g. the edge of a hole) | diameter, radius, the circle; "–" if the points lie on a line |
+| Round shape | 1 on a hole, pin, cone, sphere or ring | diameter, plus length, circumference etc. depending on the shape |
+| Area | 1 face, Shift+click adds or removes more | area and perimeter |
 
 Corners of the clicked triangle snap within 12 px. Choosing the active mode again or Esc ends measuring.
+*Keep this measurement* leaves the result in the view (with a label), *Remove kept measurements* clears them;
+*Show dimensions* draws width, depth and height at the model. Both also appear in the saved PNG of the view.
+
+## Split for printing
+
+The scissors in the section bar (*Split here for printing*) create `<name>-split.scad` next to the file. It includes the
+model (`include` for `.scad` with the current Customizer values, `import()` for `.stl`, `.3mf`, `.obj`, `.off`, `.amf`)
+and shows a part chosen in the Customizer:
+
+| Parameter | Meaning |
+| --- | --- |
+| `part` | `both` (both parts apart by `gap`, with the pins), `lower` (the side with the smaller coordinate), `upper`, `pins` |
+| `cut` | position of the cut on its axis |
+| `pin_d`, `pin_length` | pin size; half of the length goes into each part. Chosen from the section: 5, 4, 3 or 2 mm, wherever there is at least 1.6 mm of material around the hole |
+| `clearance` | extra room in the holes (0.15 mm) |
+| `gap` | space between the parts for `both` |
+
+Pins sit where the section has the most material, two per connected piece if there is room, so the parts cannot turn.
+They are computed once when splitting: after moving `cut`, check them in the section view. If the model uses `use <…>`
+(not allowed inside a module), the evaluated model is saved as `<name>-split.csg` next to it - split again after
+changing the model. All parts go into one file with *3MF for Multi-Color Print…* by the values of `part`.
 
 ## MCP tools
 
@@ -180,4 +204,5 @@ with its library folders and backend. Paths are absolute or relative to the proj
 | | `parameters`, `parameterSet` | string | – | as for `scad_render` |
 
 `scad_render` returns the result (ok, failed, empty, 2D), size and bounding box in mm, triangle count, volume (cm³) and
-surface (cm²), the messages with their line and the paths of the images.
+surface (cm²), the overhangs for printing (faces more than 45° from vertical, not on the bed: area, share of the surface,
+height range, lowest point, flat undersides), the messages with their line and the paths of the images.

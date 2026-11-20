@@ -28,8 +28,9 @@ import javax.swing.JFrame
  * Erzeugt Screenshots in der Sandbox-IDE (./gradlew runIde -Pscreenshots=...). Zeichnet den Frame selbst in ein
  * Bild, braucht also keine Bildschirmaufnahme-Rechte. Welche Dateien, steht in marketplace/screenshots.txt
  * (bzw. `screenshots.txt` im Projekt bei -PscreenshotProject), je Zeile
- * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:[angle:|diameter:|hole:|area:]x,y,z;x,y,z] [up:y] [select:teil] [transform] [caret:text] [module:name] [print] [view:below]` (`set:` ändert
- * Customizer-Werte, `export:` nimmt zusätzlich den Export-Dialog für das Format auf, als `bildname-dialog.png`).
+ * `bildname: pfad [dark] [preview|editor] [messages] [nocustomizer] [customizerbottom] [set:name=wert …] [export:stl] [section:x:0.5[:flip]] [measure:[angle:|diameter:|hole:|area:]x,y,z;x,y,z] [up:y] [select:teil] [transform] [caret:text] [module:name] [print] [view:below] [keep] [dimensions] [split]` (`set:` ändert
+ * Customizer-Werte, `keep` behält die Messung, `dimensions` zeigt die Maße, `split` teilt am Schnitt und nimmt die erzeugte
+ * Datei auf, `export:` nimmt zusätzlich den Export-Dialog für das Format auf, als `bildname-dialog.png`).
  * Ist nur in Builds mit -Pscreenshots enthalten.
  */
 object ScreenshotMaker {
@@ -148,6 +149,33 @@ object ScreenshotMaker {
                 }
                 Thread.sleep(1500)
             }
+            // keep behält die Messung im Bild, dimensions zeigt die Maße des Modells
+            if ("keep" in words || "dimensions" in words) {
+                edt {
+                    if ("keep" in words) {
+                        invokeViewer(project, file, "keepMeasure", null)
+                        invokeViewer(project, file, "setMeasure", false)
+                    }
+                    if ("dimensions" in words) {
+                        invokeViewer(project, file, "setDimensions", true)
+                        invokeViewer(project, file, "fit", null)
+                    }
+                }
+                Thread.sleep(800)
+            }
+            // split: wie die Schere im Schnitt-Feld - das Plugin legt <name>-split.scad an und öffnet sie
+            var shotFile = file
+            if ("split" in words) {
+                edt { invokeViewer(project, file, "requestSplit", null) }
+                val deadline = System.currentTimeMillis() + 30_000
+                while (System.currentTimeMillis() < deadline) {
+                    val selected = edt { FileEditorManager.getInstance(project).selectedFiles.firstOrNull { it.name.startsWith("${file.nameWithoutExtension}-split") } }
+                    if (selected != null) { shotFile = selected; break }
+                    Thread.sleep(500)
+                }
+                check(shotFile != file) { "split file not opened" }
+                Thread.sleep(12000)
+            }
             // caret:text setzt die Schreibmarke auf das erste Vorkommen von text (hebt den Aufruf in der Vorschau hervor)
             words.firstOrNull { it.startsWith("caret:") }?.removePrefix("caret:")?.let { needle ->
                 edt {
@@ -164,7 +192,15 @@ object ScreenshotMaker {
                 edt { FileEditorManager.getInstance(project).getEditors(file).filterIsInstance<ScadSplitEditor>().firstOrNull()?.preview?.expandMessages() }
                 Thread.sleep(800)
             }
+            // Hinweise (z. B. „Split created“) nicht im Bild
+            edt {
+                com.intellij.notification.NotificationsManager.getNotificationsManager()
+                    .getNotificationsOfType(com.intellij.notification.Notification::class.java, project).forEach { it.expire() }
+            }
+            Thread.sleep(500)
             shot(frame.rootPane, File(out, "$name.png"))
+            // Maße sind eine gespeicherte Ansichtsoption - für die folgenden Bilder wieder aus
+            if ("dimensions" in words) edt { invokeViewer(project, file, "setDimensions", false) }
             words.firstOrNull { it.startsWith("export:") }?.let { word ->
                 val format = ExportFormat.byExtension(word.removePrefix("export:")) ?: error("$word: unknown format")
                 val features = OpenScad.features(OpenScad.executable() ?: error("OpenSCAD missing"))
@@ -179,7 +215,10 @@ object ScreenshotMaker {
                 shot((dialog.window as javax.swing.RootPaneContainer).rootPane, File(out, "$name-dialog.png"))
                 edt { dialog.close(DialogWrapper.CANCEL_EXIT_CODE) }
             }
-            edt { FileEditorManager.getInstance(project).closeFile(file) }
+            edt {
+                FileEditorManager.getInstance(project).closeFile(file)
+                if (shotFile != file) FileEditorManager.getInstance(project).closeFile(shotFile)
+            }
             Thread.sleep(800)
         }
         edt {
@@ -187,6 +226,13 @@ object ScreenshotMaker {
             ScadSphereSettings.showCustomizer = true
         }
         log.warn("SCAD Sphere: screenshots written to $out")
+    }
+
+    /** Funktion im Viewer der Vorschau einer .scad-Datei oder einer Modelldatei aufrufen. */
+    private fun invokeViewer(project: Project, file: com.intellij.openapi.vfs.VirtualFile, function: String, argument: Any?) {
+        val editors = FileEditorManager.getInstance(project).getEditors(file)
+        editors.filterIsInstance<ScadSplitEditor>().firstOrNull()?.preview?.invokeViewer(function, argument)
+            ?: editors.filterIsInstance<app.heckit.ide.scadsphere.editor.ModelFileEditor>().firstOrNull()?.invokeViewer(function, argument)
     }
 
     private fun theme(laf: LafManager, dark: Boolean) {

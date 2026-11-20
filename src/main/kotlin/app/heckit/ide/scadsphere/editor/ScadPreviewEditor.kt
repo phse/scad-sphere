@@ -11,6 +11,7 @@ import app.heckit.ide.scadsphere.customizer.ParameterSets
 import app.heckit.ide.scadsphere.customizer.ScadCustomizer
 import app.heckit.ide.scadsphere.customizer.ToggleCustomizerAction
 import app.heckit.ide.scadsphere.export.ExportFormat
+import app.heckit.ide.scadsphere.export.SplitForPrint
 import app.heckit.ide.scadsphere.lang.ScadFileType
 import app.heckit.ide.scadsphere.lang.ScadTypes
 import app.heckit.ide.scadsphere.psi.ScadFile
@@ -143,6 +144,14 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         viewer.onNavigate = ::navigate
         viewer.onAction = ::onAction
         viewer.onImage = { saveViewImage(project, file, it) }
+        viewer.onSplit = { message ->
+            val request = SplitForPrint.Request.of(message)
+            val exe = OpenScad.executable()
+            if (request != null && exe != null) {
+                document?.let { FileDocumentManager.getInstance().saveDocument(it) }
+                SplitForPrint.createForScad(project, exe, file, ScadCustomizer.defines(project, file), request)
+            }
+        }
         document?.addDocumentListener(object : DocumentListener {
             override fun documentChanged(event: DocumentEvent) {
                 frames.clear()
