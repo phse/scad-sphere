@@ -28,7 +28,7 @@ export function sectionSegments(tris, axis, value) {
   return segments
 }
 
-function inside(segments, u, v) {
+export function inside(segments, u, v) {
   let crossings = 0
   for (let i = 0; i < segments.length; i += 4) {
     const v1 = segments[i + 1], v2 = segments[i + 3]
@@ -39,7 +39,21 @@ function inside(segments, u, v) {
   return crossings % 2 === 1
 }
 
-function distanceToSegments(segments, u, v) {
+/** Stücke der Linie u = [u] in der Schnittfläche: [[v0, v1], ...] (aufsteigend, nur Stücke im Material). */
+export function intervalsAlong(segments, u) {
+  const crossings = []
+  for (let i = 0; i < segments.length; i += 4) {
+    const u1 = segments[i], u2 = segments[i + 2]
+    if ((u1 > u) === (u2 > u)) continue
+    crossings.push(segments[i + 1] + (u - u1) / (u2 - u1) * (segments[i + 3] - segments[i + 1]))
+  }
+  crossings.sort((a, b) => a - b)
+  const result = []
+  for (let i = 0; i + 1 < crossings.length; i += 2) if (crossings[i + 1] - crossings[i] > 1e-6) result.push([crossings[i], crossings[i + 1]])
+  return result
+}
+
+export function distanceToSegments(segments, u, v) {
   let best = Infinity
   for (let i = 0; i < segments.length; i += 4) {
     const ax = segments[i], ay = segments[i + 1], bx = segments[i + 2], by = segments[i + 3]

@@ -24,7 +24,10 @@
   <li>Color swatches next to <code>color()</code> with a color picker; live templates for modules, functions, <code>difference()</code> and Customizer groups.</li>
   <li>Errors and warnings of the last OpenSCAD run at their line in the code; unknown modules and functions and missing
       <code>include</code>/<code>use</code> files are marked while you type.</li>
-  <li><code>echo</code> output at the end of its line, like inline values in a debugger.</li>
+  <li><code>echo</code> output and the values of computed assignments at the end of their line, like inline values in a debugger
+      (<code>spacing = (length - 70) / (hooks - 1)</code> → <code>= 34</code>, with the Customizer values).</li>
+  <li><b>Print hardware</b> from Generate: screw holes (also countersunk), nut traps, holes for heat-set inserts, magnet pockets
+      and snap-fit hooks as modules of their own, with one clearance setting.</li>
   <li>Inspections: unused parameters and variables, variables assigned twice, unused <code>use</code>, missing arguments,
       deprecated modules and arguments (<code>assign</code>, <code>child</code>, <code>import_stl</code>, ...).
       Quick fixes and intentions: create an unknown module or function, inline a variable, extract a module, toggle <code>#</code>,
@@ -44,7 +47,7 @@
   <li>Show a single module: an icon next to every module renders only this one, also in library files that draw nothing themselves.</li>
   <li>Measure distances, angles and diameters (snaps to corners), holes, pins, cones, spheres and rings with one click, areas and perimeters of faces, and a hatched section view along X, Y or Z.
       Keep measurements in the view and show the dimensions of the model - also in the saved PNG.</li>
-  <li>Animation of <code>$t</code> with play and slider; save the current view as PNG.</li>
+  <li>Animation of <code>$t</code> with play and slider; save the current view as PNG, as a turntable GIF or the animation as GIF.</li>
   <li>.stl, .3mf, .obj, .off and .amf files open in the same 3D view and reload when they change; .gltf, .glb and .ply files (also point clouds) for viewing.
       Convert them to another format (also several at once), or start a new .scad file that imports them.</li>
   <li>Choose the up axis per file (Z, Y or X), e.g. Y for models from Blender or Sweet Home 3D.</li>
@@ -53,10 +56,13 @@
 <h3>3D printing</h3>
 <ul>
   <li>Print bed outline (size and origin configurable, presets for common 3D printers) and a warning when the model does not fit.</li>
-  <li><b>Print check</b>: overhangs that need supports in red (angle adjustable), walls that are too thin, the area lying on the bed, open edges,
-      volume, weight and filament length for PLA, PETG, ABS and more. Works for .scad models and for .stl, .3mf, .obj and other mesh files.</li>
-  <li><b>Split for printing</b> at a section through the model: a .scad with both halves, pins and holes for the pins, ready for the
-      Customizer or as one multi-color 3MF - e.g. for models larger than the print bed.</li>
+  <li><b>Print check</b>: overhangs that need supports in red (angle adjustable), spots where a layer would start in mid-air,
+      walls that are too thin, the area lying on the bed, open edges, volume, weight and filament length for PLA, PETG, ABS and more.
+      Works for .scad models and for .stl, .3mf, .obj and other mesh files. Adds breakaway <b>support pillars</b> to the .scad
+      and <b>suggests the print orientation</b> - a click turns the model.</li>
+  <li><b>Split for printing</b> at one or more sections through the model: a .scad with the parts joined by pins, 1.75 mm filament
+      dowels, pegs or dovetails, ready for the Customizer or as one multi-color 3MF. The pins are shown in the section and can be
+      moved by click; for models larger than the print bed the cuts are proposed.</li>
   <li><b>Lay face on bed</b>: click a face and the model or the selected part is turned so that it prints on this face.</li>
   <li><b>3MF for multi-color print</b>: one object with a part per color() or per value of a parameter, each with its filament -
       Bambu Studio and OrcaSlicer load it ready for the AMS or a second nozzle. The viewer shows such files in the colors of their filaments.</li>
@@ -97,6 +103,9 @@
 <ul>
   <li>With the IDE's MCP server enabled, an assistant (Claude Code, Junie, ...) can call <code>scad_render</code>: it gets the errors,
       warnings and <code>echo</code> output with line numbers, size, volume, overhangs and PNG images of the model from the views it asks for.</li>
+  <li><code>scad_print_check</code> checks a model for printing (overhangs, mid-air spots, thin walls, bed fit), <code>scad_section</code>
+      returns a cross-section with its area as an image, and <code>scad_view</code> shows the assistant the 3D view exactly as you
+      see it - with kept measurements and the section.</li>
   <li><code>scad_parameters</code> lists the Customizer parameters and parameter sets, <code>scad_export</code> writes any export format.</li>
 </ul>
 
@@ -232,6 +241,10 @@ OpenSCAD itself is only needed for the preview, export and conversion.</p>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
             <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
         </group>
+        <!-- Generate (⌘N) im OpenSCAD-Editor -->
+        <action id="ScadSphere.InsertHardware" class="app.heckit.ide.scadsphere.editor.InsertPrintHardwareAction">
+            <add-to-group group-id="GenerateGroup" anchor="last"/>
+        </action>
         <!-- Werkzeugleiste über der 3D-Ansicht von Modelldateien -->
         <group id="ScadSphere.ModelToolbar">
             <reference ref="ScadSphere.Convert"/>

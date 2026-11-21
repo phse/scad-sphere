@@ -163,6 +163,16 @@ object ScreenshotMaker {
                 }
                 Thread.sleep(800)
             }
+            // call:funktion oder call:funktion=json ruft window.scadSphere.funktion(json) im Viewer auf (mehrere nacheinander)
+            val calls = words.filter { it.startsWith("call:") }.map { it.removePrefix("call:") }
+            if (calls.isNotEmpty()) {
+                for (call in calls) {
+                    val function = call.substringBefore('=')
+                    val argument = call.substringAfter('=', "").takeIf { it.isNotEmpty() }?.let { com.google.gson.JsonParser.parseString(it) }
+                    edt { invokeViewer(project, file, function, argument) }
+                    Thread.sleep(1500)
+                }
+            }
             // split: wie die Schere im Schnitt-Feld - das Plugin legt <name>-split.scad an und öffnet sie
             var shotFile = file
             if ("split" in words) {

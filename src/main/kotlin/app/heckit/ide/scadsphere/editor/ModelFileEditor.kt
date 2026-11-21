@@ -79,6 +79,9 @@ class ModelFileEditor(private val project: Project, private val file: VirtualFil
         root.add(toolbar.component, BorderLayout.NORTH)
         root.add(viewer.component, BorderLayout.CENTER)
         viewer.onImage = { saveViewImage(project, file, it) }
+        viewer.onGif = { saveViewImage(project, file, it, "gif") }
+        // In eine vorgeschlagene Lage drehen: wie Transformieren, nur für Formate, die das Plugin schreiben kann
+        viewer.setPrintActions(pillars = false, orient = if (file.extension?.lowercase() in setOf("stl", "3mf", "obj", "off", "amf")) "mesh" else null)
         viewer.fileKey = file.path
         viewer.onUndo = { redo -> undoRedo(redo) }
         // ⌘Z/⇧⌘Z: Kürzel der IDE-Aktionen Undo/Redo direkt am Browser anmelden, der Promoter gibt ihnen Vorrang vor
@@ -225,6 +228,9 @@ class ModelFileEditor(private val project: Project, private val file: VirtualFil
 
     /** Für den Screenshot-Helfer: Funktion im Viewer aufrufen (z. B. `selectPart`, `openTransform`). */
     fun invokeViewer(function: String, argument: Any?) = viewer.invoke(function, argument)
+
+    /** Bild und Zustand der Ansicht (MCP-Werkzeug scad_view). */
+    fun describeView(image: Int) = viewer.describe(image)
 
     override fun getComponent(): JComponent = root
     override fun getPreferredFocusedComponent(): JComponent = viewer.component

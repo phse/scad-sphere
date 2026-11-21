@@ -56,6 +56,16 @@ loop or `let` it lives in).
   in a debugger (a loop shows the first three values and the number of the rest). For the preview run every `echo(…)`
   of the file gets its line as a hidden first argument, which is removed from the output again; the file itself and
   exports are not touched. `echo` in included files only appears below the model.
+- **Values in the code**: computed assignments at the top level and directly in module bodies show their value from
+  the last preview run at the end of the line (`spacing = (length - 70) / (hooks - 1);  = 34`), with the Customizer
+  values; a module called several times shows its different values. Plain numbers, strings and lists of them, function
+  literals and assignments in loops or other blocks stay without (loops could run thousands of times). For the preview run
+  each of these assignments gets `echo("@@scadsphere=<line>", name);` behind its semicolon on the same line.
+- **Print hardware** (*Code | Generate… | Print Hardware…*, ⌘N / Alt+Insert): screw hole M2–M8 (also countersunk,
+  DIN 7991), nut trap (ISO 4032, optionally with a slot to the side), hole for a heat-set insert, magnet pocket and
+  snap-fit hook. Inserts the call at the caret and the module once at the end of the file, without a library. Holes and
+  pockets reach from z = 0 downwards (move them to the surface, subtract them with `difference()`); the clearance is
+  added to every pocket and remembered.
 - **Inspections** (*Settings | Editor | Inspections | OpenSCAD*): unused parameters and local variables, a variable
   assigned twice in the same scope (OpenSCAD uses the last value everywhere), `use` without any used module or
   function, calls that leave out a parameter without default value, deprecated or removed modules and arguments
@@ -164,20 +174,33 @@ also used for the preview)
   shapes give no result. *Area* takes a click on a face: a flat face (all neighbors in the same plane) or, on a round
   wall, the whole wall; shows the area and the perimeter (all edges at the rim of the selection) and highlights it.
   Shift+click adds more faces or removes them again. Esc clears the measurement.
-- **Section**: a cutting plane across X, Y or Z with a slider; the cut faces are filled and hatched.
+- **Section**: a cutting plane across X, Y or Z of the file (also when another axis points up) with a slider and a
+  field for the exact position; the cut faces are filled and hatched.
 - **Split for printing** (scissors in the section bar, in the preview and for `.stl`, `.3mf`, `.off`, `.amf` and
   `.obj`): creates `<name>-split.scad` next to the file and opens it. It includes the model in a module `model()` (the
   `.scad` with `include` plus the current Customizer values, a mesh file with `import()`), and the Customizer parameter
-  `part` shows the lower half, the upper half, the pins or all of them. Both halves get holes for the pins (diameter
-  plus clearance, half the pin length deep). The pins are placed in the section where there is at least 1.6 mm of
-  material around them: two per piece as far apart as possible (one in small pieces), 5 mm thick or thinner if there
-  is no room, at most 1.5 times as long as the thinner half is deep. All values are parameters of the new file; export
+  `part` shows one part, the pins or all of them (one cut: `lower`, `upper`; several cuts: `1`, `2`, … by position).
+  The pins are placed in the section where there is at least 1.6 mm of material around them: two per piece as far
+  apart as possible (one in small pieces), 5 mm thick or thinner if there is no room, at most 1.5 times as long as the
+  thinner half is deep. While the section is on, a second bar below it shows the connectors in the cut face (pins and
+  filament across it, pegs on the upper side, dovetails as wedges): drag one to move it, click it to remove it, click
+  the cut face to add one there (if there is room). The bar also offers the
+  **connector**: loose printed pins (holes in both parts), 1.75 mm filament pieces as dowels, pegs printed on the lower
+  part (holes only in the upper one) or dovetails (a tongue on the lower part at the pin positions, a slot with clearance
+  in the upper one; they slide together along Z, or along Y for a cut across Z) - changeable later in the Customizer.
+  **+** sets a cut at the slider (purple, with its outline); once cuts are set, the slider only looks through the model
+  and **+** adds the next cut, also across another axis. On a cut the slider snaps in, its connectors can be edited and
+  **−** removes it. The scissors split at all cuts set (or at the slider when none is set); the parts are the cells
+  between them. **Cuts for the print bed** (shown when the model is larger than the bed)
+  cuts it evenly so that every part fits. All values are parameters of the new file; export
   each part, or all at once with *3MF for Multi-Color Print…* by the values of `part`. A `.scad` that uses `use <…>`
   cannot be included in a module (OpenSCAD allows `use` only at the top level): then the evaluated CSG tree is saved
   as `<name>-split.csg` next to it and included instead - split again after changing the model.
 - **Dimensions** (*Display* menu): width, depth and height of the bounding box as dimension lines at the front edge,
-  the right edge and the front right corner. **Keep this measurement** (ruler menu) leaves the current measurement
-  with its value in the view; *Remove kept measurements* clears them (also when another file is opened). Labels keep
+  the right edge and the front corner of the higher side; a top or bottom that is clearly narrower, or a side that is
+  clearly lower, gets a dimension of its own. The pin in the label of a measurement (or **Keep this measurement** in the
+  ruler menu) leaves it with its value in the view, the trash button next to it removes it; *Remove kept measurements*
+  clears them all (also when another file is opened). Labels keep
   their size on screen and are part of the saved PNG of the view.
 - **Print check** (nozzle button): faces pointing down more steeply than the overhang angle (45° by default, adjustable)
   in red with their area - they need supports; faces lying on the bed in green with their area; walls thinner than the
@@ -187,8 +210,19 @@ also used for the preview)
   a solid print, with the density of PLA, PETG, ABS, ASA, TPU, PA or PC. Edges are counted over the whole model, so parts
   that share an edge show up as edges with more than two faces, and the underside of a part resting on another one (an
   inlay in a pocket) counts as overhang; hidden parts are left out; angle and material are remembered.
+  **Starts in mid-air** (orange): spots where a layer would begin in the air - lowest points of the surface (also a flat
+  bottom) where the material lies above and no neighbor is lower, e.g. a pin hanging down from an arm; the floor of a
+  horizontal hole does not count. They need support. In the preview, *Add support pillars* appends a module
+  `support_pillar` and one call per spot to the `.scad`: a 2 mm pillar with a small foot, standing on the bed or on the part
+  below, ending 0.2 mm below the spot so it snaps off. **Suggest print orientation** compares the six axes and the
+  normals of the twelve largest flat faces as the side facing down: little overhang first, then much contact with the
+  bed, then low height; equivalent orientations only once. A click on a suggestion turns the model: mesh files like
+  *Lay face on bed*, a `.scad` gets `translate([…]) rotate(…)` before every object at the top level (one undo step).
 - **Animation**: files that use `$t` get a bar with play, a slider and the number of steps. Each step is one OpenSCAD run
   with `-D $t=…`; computed steps are kept until the code, the Customizer or an included file changes.
+- **Save view** (camera button): as PNG, as a **turntable GIF** (36 frames once around the model, at most 480 px) or the
+  **`$t` animation as GIF** (every step rendered and recorded, then back to the step before). Encoded in the viewer with
+  gifenc.
 - **Parts** (OBJ, 3MF, AMF): the parts grouped by material or color, with show/hide per part or material and a
   filter from 15 parts on. Click a part in the list or the view to select it; click a swatch to pick a new color (OBJ:
   `Kd` in the `.mtl`, created if missing; 3MF: `basematerials` or color groups; AMF: materials and object colors).
@@ -222,20 +256,24 @@ also used for the preview)
 **MCP tools for AI assistants**
 
 With the IDE's MCP server enabled (*Settings | Tools | MCP Server*) an assistant such as Claude Code or Junie gets
-three tools. They use the OpenSCAD, the library folders and the backend from the settings.
+six tools. They use the OpenSCAD, the library folders and the backend from the settings.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `scad_render` | `filePath` (`.scad` or mesh file), `views` (`iso`, `top`, `bottom`, `front`, `back`, `right`, `left`; default `iso`), `parameters` (`name=value` per line), `parameterSet`, `imageSize` (default 800), `outputDir` | result (ok, failed, empty, 2D), size and bounding box in mm, triangles, volume, surface, overhangs for printing along +Z (faces more than 45° from vertical facing down and not on the bed: area, share of the surface, height range, lowest point, flat undersides), errors/warnings/`echo` with line, paths of the PNG images |
 | `scad_parameters` | `filePath` | Customizer parameters (type, default, range or options, group, description) and the names of the parameter sets |
 | `scad_export` | `filePath`, `targetPath` (format from the extension), `parameters`, `parameterSet` | exported file, errors and warnings |
+| `scad_print_check` | `filePath`, `parameters`, `parameterSet`, `overhangAngle` (default 45), `minWall` (default 0.8, 0 = off), `material` | overhangs (area, lowest point), spots starting in mid-air with position and radius, thin walls (area and spots), area on the bed, open and non-manifold edges, volume, weight, filament length, fit on the print bed from the settings |
+| `scad_section` | `filePath`, `axis` (`x`, `y`, `z`), `position` (default the middle), `parameters`, `parameterSet`, `imageSize`, `outputDir` | area, perimeter, number of pieces and extent of the cross-section, PNG of the section (hatched, with scale bar) |
+| `scad_view` | `filePath` (empty = active editor), `imageSize` (default 1000, 0 = none), `outputDir` | PNG of the 3D view exactly as the user sees it, view direction, section, kept measurements, print check results, selected and hidden parts, kept cuts |
 
 `scad_render` uses the unsaved editor content if the file is open and modified. The images are written by OpenSCAD
-itself (`-o view.png --camera … --viewall`), so no preview has to be open.
+itself (`-o view.png --camera … --viewall`), so no preview has to be open. `scad_print_check` and `scad_section` render an
+STL and compute the same checks as the viewer in Kotlin; `scad_view` asks the open viewer for its picture and state.
 
 **Settings** (*Settings | Tools | SCAD Sphere*): path to OpenSCAD (found automatically in the usual places of
 macOS, Windows and Linux), additional library folders, when to render, pause before rendering, preview shown on
-opening, highlighting the call at the caret, `echo` at the line, slicer for *Open in Slicer*, print bed (size, presets for common printers, origin in the center or the front left corner).
+opening, highlighting the call at the caret, `echo` at the line, values of assignments at the line, slicer for *Open in Slicer*, print bed (size, presets for common printers, origin in the center or the front left corner).
 
 The UI is available in English and German.
 
@@ -341,6 +379,11 @@ project with its own `screenshots.txt`.
 | `editor/ModelFileEditor.kt` | Viewer for `.stl`, `.3mf`, `.obj`, `.off`, `.amf` with the convert toolbar |
 | `web/src/viewer.js` | three.js scene: loaders (STL, 3MF, OBJ, AMF, OpenSCAD's SVG), colors or monochrome, camera, grid, edges, toolbar, messages, print check (`analyzePrint`) |
 | `web/src/filaments.js`, `web/src/thinWalls.js`, `web/src/splitPins.js` | Filament colors of multi-color 3MF files, thin walls (rays in a BVH), section and pin positions for splitting |
+| `web/src/printTools.js` | Spots starting in mid-air, scoring print orientations, cuts for the print bed |
+| `render/EchoLines.kt` | Line marks for `echo` and the values of assignments in the preview run |
+| `render/PrintAnalysis.kt` | Print check and cross-sections without the viewer (MCP tools): the same algorithms as the viewer in Kotlin |
+| `editor/PrintHardware.kt`, `editor/PrintFixes.kt` | *Print Hardware…*; support pillars and print orientation written into the `.scad` |
+| `mcp/ScadToolset.kt` | MCP tools `scad_render`, `scad_parameters`, `scad_export`, `scad_print_check`, `scad_section`, `scad_view` |
 | `web/src/offLoader.js` | OFF with colors per face, as OpenSCAD writes it |
 
 Since 2026.x JCEF renders off-screen and a non-passive `wheel` listener makes Chromium wait for the page on every
@@ -351,4 +394,4 @@ The viewer only draws when something changes, there is no animation loop.
 
 Apache License 2.0, see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 Copyright 2026 Peter Heck (heck\it). The name and logo are not covered by the license.
-three.js and fflate (MIT) are bundled; OpenSCAD is not bundled.
+three.js, fflate and gifenc (MIT) are bundled; OpenSCAD is not bundled.

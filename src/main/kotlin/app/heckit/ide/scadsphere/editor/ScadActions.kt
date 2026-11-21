@@ -78,10 +78,11 @@ class OpenInOpenScadAction : DumbAwareAction(ScadSphereBundle.messagePointer("ac
 const val NOTIFICATIONS = "SCAD Sphere"
 
 /** Aktuelle Ansicht des Viewers als PNG speichern; vorgeschlagen wird `<datei>.png` daneben. */
-internal fun saveViewImage(project: Project?, file: VirtualFile, png: ByteArray) {
-    val descriptor = FileSaverDescriptor(ScadSphereBundle.message("image.title"), ScadSphereBundle.message("image.description"), "png")
+internal fun saveViewImage(project: Project?, file: VirtualFile, png: ByteArray, extension: String = "png") {
+    val descriptor = if (extension == "gif") FileSaverDescriptor(ScadSphereBundle.message("gif.title"), ScadSphereBundle.message("gif.description"), "gif")
+    else FileSaverDescriptor(ScadSphereBundle.message("image.title"), ScadSphereBundle.message("image.description"), "png")
     val target = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
-        .save(file.parent, file.nameWithoutExtension + ".png") ?: return
+        .save(file.parent, file.nameWithoutExtension + ".$extension") ?: return
     runCatching {
         target.file.writeBytes(png)
         LocalFileSystem.getInstance().refreshAndFindFileByIoFile(target.file)

@@ -52,9 +52,9 @@ class SplitForPrintTest : BasePlatformTestCase() {
         assertEquals(0, request.axis)
         assertEquals(30.0, request.value)
         assertEquals(listOf(32.12, 4.78), request.pins[1].toList())
-        assertEquals(20.0, request.pinLength)
+        assertEquals(20.0, request.cuts[0].pinLength)
         assertNull(SplitForPrint.Request.of(com.google.gson.JsonParser.parseString("""{"type":"split","axis":5}""").asJsonObject))
-        assertTrue(SplitForPrint.source("a.stl", "import(\"a.stl\");", request).contains("pin_positions = [[7.52, 4.78], [32.12, 4.78]];"))
+        assertTrue(SplitForPrint.source("a.stl", "import(\"a.stl\");", request).contains("[0, 30, [[7.52, 4.78], [32.12, 4.78]], [7.52, 32.12]]"))
     }
 
     fun testSplitParts() {

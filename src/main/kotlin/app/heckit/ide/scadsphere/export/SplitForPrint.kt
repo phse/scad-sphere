@@ -26,98 +26,183 @@ import java.util.Locale
  * Werten von `part`) lassen sich alle Teile in eine Datei exportieren.
  */
 object SplitForPrint {
+    /** Ein Schnitt quer zur Achse [axis] bei [value], mit Stiftstellen (u, v = die beiden anderen Achsen aufsteigend). */
+    class Cut(val axis: Int, val value: Double, val pins: List<DoubleArray>, val pinD: Double, val pinLength: Double)
+
+    /** Wie die Teile zusammenhalten: lose Stifte, Filament-Stücke (1,75 mm), angedruckte Zapfen oder Schwalbenschwänze. */
+    enum class Connector(val id: String) { PINS("pins"), FILAMENT("filament"), PEGS("pegs"), DOVETAIL("dovetail") }
+
     class Request(
-        val axis: Int,
-        val value: Double,
+        val cuts: List<Cut>,
         val min: DoubleArray,
         val max: DoubleArray,
-        val pins: List<DoubleArray>,
-        val pinD: Double,
-        val pinLength: Double,
+        val connector: Connector = Connector.PINS,
     ) {
+        /** Ein Schnitt (Format bis 1.8 und Tests). */
+        constructor(axis: Int, value: Double, min: DoubleArray, max: DoubleArray, pins: List<DoubleArray>, pinD: Double, pinLength: Double, connector: Connector = Connector.PINS) :
+            this(listOf(Cut(axis, value, pins, pinD, pinLength)), min, max, connector)
+
+        val axis: Int get() = cuts.first().axis
+        val value: Double get() = cuts.first().value
+        val pins: List<DoubleArray> get() = cuts.flatMap { it.pins }
+
+        /** Anzahl der Teile: je Achse ein Stück mehr als Schnitte, multipliziert. */
+        val pieceCount: Int get() = (0..2).fold(1) { product, axis -> product * (cuts.count { it.axis == axis } + 1) }
+
         companion object {
             fun of(message: JsonObject): Request? = runCatching {
                 fun vector(name: String) = message.getAsJsonArray(name).map { it.asDouble }.toDoubleArray().takeIf { it.size == 3 }!!
-                Request(
-                    axis = message.get("axis").asInt.takeIf { it in 0..2 }!!,
-                    value = message.get("value").asDouble,
-                    min = vector("min"),
-                    max = vector("max"),
-                    pins = message.getAsJsonArray("pins").map { pin -> pin.asJsonArray.map { it.asDouble }.toDoubleArray() }.filter { it.size == 2 },
-                    pinD = message.get("pinD").asDouble,
-                    pinLength = message.get("pinLength").asDouble,
+                fun cut(json: JsonObject) = Cut(
+                    axis = json.get("axis").asInt.takeIf { it in 0..2 }!!,
+                    value = json.get("value").asDouble,
+                    pins = json.getAsJsonArray("pins").map { pin -> pin.asJsonArray.map { it.asDouble }.toDoubleArray() }.filter { it.size == 2 },
+                    pinD = json.get("pinD").asDouble,
+                    pinLength = json.get("pinLength").asDouble,
                 )
+                val cuts = message.getAsJsonArray("cuts")?.map { cut(it.asJsonObject) } ?: listOf(cut(message))
+                val connector = message.get("connector")?.asString?.let { id -> Connector.entries.firstOrNull { it.id == id } } ?: Connector.PINS
+                Request(cuts.distinctBy { it.axis to it.value }.takeIf { it.isNotEmpty() }!!, vector("min"), vector("max"), connector)
             }.getOrNull()
         }
     }
+
+    /** Namen der Teile für `part`: bei einem Schnitt lower/upper, sonst 1, 2, 3, ... */
+    fun pieceNames(request: Request): List<String> =
+        if (request.pieceCount == 2) listOf("lower", "upper") else (1..request.pieceCount).map { it.toString() }
 
     /**
      * Quelltext der geteilten Datei. [model]: Anweisung(en) im Modul `model()`, z. B. `include <box.scad>` oder
      * `import("box.stl");`; [sourceName] nur für den Kopfkommentar.
      */
     fun source(sourceName: String, model: String, request: Request): String {
-        val axisName = "XYZ"[request.axis]
         val margin = 1.0
         val lo = DoubleArray(3) { request.min[it] - margin }
         val hi = DoubleArray(3) { request.max[it] + margin }
-        val pins = request.pins.joinToString(", ", "[", "]") { "[${number(it[0])}, ${number(it[1])}]" }
-        val (u, v) = listOf(0, 1, 2).filter { it != request.axis }.map { "XYZ"[it] }
+        val first = request.cuts.first()
+        val pinD = first.pinD
+        val pinLength = request.cuts.minOf { it.pinLength }
+        val dovetailWidth = maxOf(6.0, 2 * pinD)
+        val names = pieceNames(request)
+        val all = if (names.size == 2) "both" else "all"
+        val cuts = request.cuts.joinToString(",\n    ", "[\n    ", "\n]") { cut ->
+            val pins = cut.pins.joinToString(", ", "[", "]") { "[${number(it[0])}, ${number(it[1])}]" }
+            // Schwalbenschwänze an den u-Werten der Stifte, zu nahe beieinander nur einmal
+            val tails = mutableListOf<Double>()
+            for (u in cut.pins.map { it[0] }.sorted()) if (tails.none { kotlin.math.abs(it - u) < dovetailWidth * 1.5 }) tails += u
+            "[${cut.axis}, ${number(cut.value)}, $pins, ${tails.joinToString(", ", "[", "]") { number(it) }}]"
+        }
+        val where = request.cuts.joinToString(", ") { "${"xyz"[it.axis]} = ${number(it.value)}" }
+        val partOptions = (listOf(all) + names + if (request.connector == Connector.PINS) listOf("pins") else emptyList()).joinToString(", ")
+        val connectors = Connector.entries.joinToString(", ") { it.id }
+        val pieces = if (names.size == 2) "two parts" else "${names.size} parts"
         return """
-            |// $sourceName split at ${axisName.lowercaseChar()} = ${number(request.value)} mm for printing in two parts, joined with pins.
+            |// $sourceName split at $where mm for printing in $pieces.
             |// Created by SCAD Sphere. Pick a part in the Customizer and export it, or export all parts
             |// into one 3MF: 3MF for Multi-Color Print..., by the values of "part".
-            |// The pin positions come from the section at the time of the split: after moving the
+            |// The pin positions come from the section at the time of the split: after moving a
             |// cut, check them with the section view (they must lie inside the material).
             |
             |/* [Split] */
-            |// Part to show (lower = the side with smaller $axisName)
-            |part = "both"; // [both, lower, upper, pins]
-            |// Position of the cut on the $axisName axis
-            |cut = ${number(request.value)};
-            |// Pin diameter
-            |pin_d = ${number(request.pinD)};
+            |// Part to show (lower = the side with smaller coordinates)
+            |part = "$all"; // [$partOptions]
+            |// How the parts are joined (filament = 1.75 mm dowels, pegs on the lower part, dovetails slide in along ${if (first.axis == 2) "Y" else "Z"})
+            |connector = "${request.connector.id}"; // [$connectors]
+            |// Pin and peg diameter
+            |pin_d = ${number(pinD)};
             |// Pin length (half of it goes into each part)
-            |pin_length = ${number(request.pinLength)};
+            |pin_length = ${number(pinLength)};
+            |// Length of the filament pieces
+            |filament_length = 12;
+            |// Width of a dovetail at the cut
+            |dovetail_width = ${number(dovetailWidth)};
+            |// Depth of a dovetail
+            |dovetail_depth = ${number(minOf(8.0, maxOf(3.0, pinLength / 2)))};
             |// Extra room in the holes
             |clearance = 0.15;
-            |// Space between the parts when showing both
+            |// Space between the parts when showing all
             |gap = 10;
             |
             |/* [Hidden] */
-            |axis = ${request.axis}; // 0 = X, 1 = Y, 2 = Z
-            |// Pin centers in the cut plane ($u, $v)
-            |pin_positions = $pins;
+            |// Cuts: [axis (0 = X, 1 = Y, 2 = Z), position, pin centers in the cut plane, dovetail positions]
+            |cuts = $cuts;
             |lo = [${lo.joinToString(", ") { number(it) }}];
             |hi = [${hi.joinToString(", ") { number(it) }}];
+            |piece_names = [${names.joinToString(", ") { "\"$it\"" }}];
             |${'$'}fn = 48;
             |
             |module model() {
             |${model.trimEnd().prependIndent("    ")}
             |}
             |
-            |function at_axis(p, value) = [for (i = [0:2]) i == axis ? value : p[i]];
-            |function pin_point(p) = axis == 0 ? [cut, p[0], p[1]] : axis == 1 ? [p[0], cut, p[1]] : [p[0], p[1], cut];
-            |pin_turn = [[0, 90, 0], [-90, 0, 0], [0, 0, 0]][axis];
+            |function sorted(v) = len(v) <= 1 ? v : let(p = v[0], rest = [for (i = [1:len(v) - 1]) v[i]])
+            |    concat(sorted([for (x = rest) if (x < p) x]), [p], sorted([for (x = rest) if (x >= p) x]));
+            |edges = [for (a = [0:2]) concat([lo[a]], sorted([for (c = cuts) if (c[0] == a) c[1]]), [hi[a]])];
+            |// Cells between the cuts: [[i, j, k], lower corner, upper corner]
+            |cells = [for (i = [0:len(edges[0]) - 2], j = [0:len(edges[1]) - 2], k = [0:len(edges[2]) - 2])
+            |    [[i, j, k], [edges[0][i], edges[1][j], edges[2][k]], [edges[0][i + 1], edges[1][j + 1], edges[2][k + 1]]]];
             |
-            |module half(upper) {
-            |    a = upper ? at_axis(lo, cut) : lo;
-            |    b = upper ? hi : at_axis(hi, cut);
-            |    translate(a) cube(b - a);
-            |}
+            |function pin_point(c, p) = c[0] == 0 ? [c[1], p[0], p[1]] : c[0] == 1 ? [p[0], c[1], p[1]] : [p[0], p[1], c[1]];
+            |function pin_turn(a) = [[0, 90, 0], [-90, 0, 0], [0, 0, 0]][a];
+            |// The cut lies on the upper (or lower) face of the cell, the point inside that face
+            |function on_face(cell, c, upper) = abs((upper ? cell[2] : cell[1])[c[0]] - c[1]) < 1e-6;
+            |function in_face(cell, c, q) = len([for (a = [0:2]) if (a != c[0] && (q[a] < cell[1][a] || q[a] > cell[2][a])) a]) == 0;
             |
-            |module pin_holes() {
-            |    for (p = pin_positions)
-            |        translate(pin_point(p)) rotate(pin_turn)
-            |            cylinder(d = pin_d + 2 * clearance, h = pin_length + 1, center = true);
-            |}
-            |
-            |module piece(upper) {
-            |    difference() {
-            |        intersection() {
-            |            model();
-            |            half(upper);
+            |module holes(cell) {
+            |    for (c = cuts) if (on_face(cell, c, true) || on_face(cell, c, false)) for (p = c[2]) if (in_face(cell, c, pin_point(c, p)))
+            |        translate(pin_point(c, p)) rotate(pin_turn(c[0])) {
+            |            if (connector == "pins")
+            |                cylinder(d = pin_d + 2 * clearance, h = pin_length + 1, center = true);
+            |            if (connector == "filament")
+            |                cylinder(d = 1.75 + 2 * clearance, h = filament_length + 1, center = true, ${'$'}fn = 24);
+            |            // Pegs: the hole only in the upper part
+            |            if (connector == "pegs" && on_face(cell, c, false))
+            |                cylinder(d = pin_d + 2 * clearance, h = pin_length / 2 + 0.5);
             |        }
-            |        pin_holes();
+            |}
+            |
+            |module pegs(cell) {
+            |    for (c = cuts) if (on_face(cell, c, true)) for (p = c[2]) if (in_face(cell, c, pin_point(c, p)))
+            |        translate(pin_point(c, p)) rotate(pin_turn(c[0])) {
+            |            cylinder(d = pin_d, h = pin_length / 2 - 0.4);
+            |            translate([0, 0, pin_length / 2 - 0.4]) cylinder(d1 = pin_d, d2 = pin_d - 0.8, h = 0.4);
+            |        }
+            |}
+            |
+            |// Map local X to the cut axis, Y across the dovetail and Z along the slide direction
+            |module along(a, w, s, origin) multmatrix([for (i = [0:2]) [i == a ? 1 : 0, i == w ? 1 : 0, i == s ? 1 : 0, origin[i]]]) children();
+            |
+            |// Dovetails at the upper face of the cell (tongues) or at its lower face (slots, with clearance)
+            |module dovetails(cell, slots) {
+            |    flare = dovetail_depth * tan(15);
+            |    for (c = cuts) if (on_face(cell, c, !slots)) {
+            |        a = c[0];
+            |        s = a == 2 ? 1 : 2;
+            |        w = 3 - a - s;
+            |        for (u = c[3]) {
+            |            origin = [for (i = [0:2]) i == a ? c[1] : i == w ? u : cell[1][i]];
+            |            along(a, w, s, origin) linear_extrude(height = cell[2][s] - cell[1][s])
+            |                offset(delta = slots ? clearance : 0)
+            |                    polygon([[slots ? -0.01 : 0, -dovetail_width / 2], [dovetail_depth, -dovetail_width / 2 - flare],
+            |                             [dovetail_depth, dovetail_width / 2 + flare], [slots ? -0.01 : 0, dovetail_width / 2]]);
+            |        }
+            |    }
+            |}
+            |
+            |module piece(n) {
+            |    cell = cells[n];
+            |    union() {
+            |        difference() {
+            |            intersection() {
+            |                model();
+            |                union() {
+            |                    translate(cell[1]) cube(cell[2] - cell[1]);
+            |                    if (connector == "dovetail") dovetails(cell, false);
+            |                }
+            |            }
+            |            holes(cell);
+            |            if (connector == "dovetail") dovetails(cell, true);
+            |        }
+            |        if (connector == "pegs") pegs(cell);
             |    }
             |}
             |
@@ -129,15 +214,17 @@ object SplitForPrint {
             |    translate([0, 0, pin_length - c]) cylinder(d1 = pin_d, d2 = pin_d - 2 * c, h = c);
             |}
             |
+            |all_pins = [for (c = cuts, p = c[2]) p];
             |module pins() {
-            |    for (i = [0:len(pin_positions) - 1])
-            |        translate([lo.x + i * (pin_d + 4) + pin_d / 2, lo.y - gap - pin_d / 2, axis == 2 ? lo.z : 0]) pin();
+            |    if (len(all_pins) > 0) for (i = [0:len(all_pins) - 1])
+            |        translate([lo.x + i * (pin_d + 4) + pin_d / 2, lo.y - gap - pin_d / 2, lo.z]) pin();
             |}
             |
-            |if (part == "lower" || part == "both") piece(false);
-            |if (part == "upper") piece(true);
-            |if (part == "both") translate(at_axis([0, 0, 0], gap)) piece(true);
-            |if ((part == "pins" || part == "both") && len(pin_positions) > 0) pins();
+            |for (n = [0:len(cells) - 1]) {
+            |    if (part == piece_names[n]) piece(n);
+            |    if (part == "$all") translate(cells[n][0] * gap) piece(n);
+            |}
+            |if ((part == "pins" || part == "$all") && connector == "pins") pins();
             |""".trimMargin()
     }
 

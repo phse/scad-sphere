@@ -100,7 +100,9 @@ export function applyFilaments(group, info, makeMaterial) {
   // Nur ein Filament und keine Projektfarben: nichts zu unterscheiden, Modellfarbe behalten
   if (used.size < 2 && !info.colours.length && !info.ownExport) return 0
   let count = 0
-  const paint = (object, extruder, name) => {
+  const paint = (object, assigned, name) => {
+    // Wie Bambu Studio: Ein Filament, das es im Projekt nicht gibt (z. B. 2 bei nur einem Filament), wird zu Filament 1
+    const extruder = info.colours.length && assigned > info.colours.length ? 1 : assigned
     const own = info.ownExport ? colorOfName(name) : null
     const keep = !own && !info.colours.length && extruder === 1
     object.traverse((child) => {

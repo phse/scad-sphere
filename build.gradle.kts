@@ -96,6 +96,33 @@ intellijPlatform {
             untilBuild = provider { null }
         }
         changeNotes = """
+            <h3>1.9.0</h3>
+            <ul>
+              <li>Values in the code: computed assignments show their value from the last preview run at the end of the line,
+                  with the Customizer values (<code>spacing = (length - 70) / (hooks - 1)</code> → <code>= 34</code>).</li>
+              <li>Print check: spots where a layer would start in mid-air (e.g. a pin hanging down) in orange; in the preview
+                  <i>Add support pillars</i> writes breakaway pillars into the .scad.</li>
+              <li>Suggest print orientation: the best sides to print on (overhangs, contact with the bed, height); a click
+                  turns the model - mesh files like Lay face on bed, a .scad with <code>rotate()</code> (trying several
+                  suggestions keeps one rotation).</li>
+              <li>Split for printing: the connectors are shown in the section before splitting (drag to move, click to
+                  remove or add), connectors (loose pins, 1.75 mm filament dowels, pegs on the part, dovetails), several cuts,
+                  and cuts proposed when the model is larger than the print bed.</li>
+              <li>Section: the position can be typed in, and X, Y and Z are the axes of the file, also when another axis
+                  points up.</li>
+              <li>Dimensions: a narrower top or a lower side gets a dimension of its own; measurements are kept with a pin
+                  in their label and removed with a trash button next to it.</li>
+              <li>Print Hardware… (Generate, ⌘N / Alt+Insert): screw holes (also countersunk), nut traps, holes for heat-set
+                  inserts, magnet pockets and snap-fit hooks as modules of their own, with one clearance setting.</li>
+              <li>Save the view as a turntable GIF or the <code>${"$"}t</code> animation as GIF.</li>
+              <li>New MCP tools: <code>scad_print_check</code> (overhangs, mid-air spots, thin walls, edges, weight, bed fit),
+                  <code>scad_section</code> (cross-section with area and image) and <code>scad_view</code> (the 3D view as
+                  the user sees it, with kept measurements and section).</li>
+              <li>Fix: parameter sets written next to the file from outside the IDE are found by the MCP tools without
+                  opening the file first.</li>
+              <li>Fix: Bambu Studio projects whose parts use a filament the project does not have show them in filament 1,
+                  like Bambu Studio.</li>
+            </ul>
             <h3>1.8.0</h3>
             <ul>
               <li>Split for printing: a button in the section view creates a .scad next to the model with the lower half, the

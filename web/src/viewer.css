@@ -228,11 +228,39 @@ html, body {
 }
 
 .measure-label .parts { color: var(--muted); font-size: 11px; }
+.measure-label:not(.side) { display: flex; align-items: center; gap: 6px; }
+.measure-label.side { display: flex; align-items: flex-start; gap: 6px; }
+.measure-label[hidden] { display: none; }
+.measure-label .keep, .kept-remove {
+  pointer-events: auto; flex: none; width: 20px; height: 20px; padding: 2px; border: none; border-radius: 4px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.measure-label .keep:hover, .kept-remove:hover { background: var(--hover); color: var(--fg); }
+.measure-label .keep svg, .kept-remove svg { width: 16px; height: 16px; display: block; }
+.kept-buttons { position: absolute; inset: 0; pointer-events: none; }
+/* Wie ein kleines Schild neben dem Schild der Messung: deckend, beim Überfahren nur das Symbol rot */
+.kept-remove {
+  position: absolute; transform: translateY(-50%); display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--fg);
+}
+.kept-remove:hover { background: var(--panel); color: var(--error); border-color: var(--error); }
+.kept-remove[hidden] { display: none; }
 
-.section-panel {
+.right-stack {
   position: absolute;
   top: 46px;
   right: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  pointer-events: none;
+}
+.right-stack > * { pointer-events: auto; }
+.right-stack > [hidden] { display: none; }
+
+.section-panel {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -258,8 +286,23 @@ html, body {
 .section-panel button:hover { background: var(--hover); color: var(--fg); }
 .section-panel button.on { color: var(--active); font-weight: 600; }
 .section-panel svg { width: 14px; height: 14px; display: block; }
-.section-panel input { width: 140px; }
-.section-panel .value { min-width: 92px; font-variant-numeric: tabular-nums; }
+.section-panel .slider { width: 140px; }
+.section-panel .value { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.section-panel .number {
+  width: 64px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg);
+  font: inherit; font-variant-numeric: tabular-nums;
+}
+/* Teilen: Feld unter dem Schnitt (Verbindung, Schnitte, Vorschlag für das Bett), darunter der Hinweis in voller Länge */
+.split-panel { flex-direction: column; align-items: stretch; gap: 2px; padding: 3px 6px 5px; font-size: 12px; }
+.split-row { display: flex; align-items: center; gap: 6px; }
+.split-row > * { flex: none; white-space: nowrap; }
+.split-panel select {
+  padding: 0 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit;
+}
+/* Breite 0 + min-width 100 %: der Hinweis bricht um, statt das Feld breiter zu machen */
+.split-panel .hint { width: 0; min-width: 100%; white-space: normal; font-size: 11px; line-height: 1.35; }
+.split-panel .propose { color: var(--active); }
+.split-panel .cuts:empty { display: none; }
 
 .animation-panel {
   position: absolute;
@@ -521,9 +564,6 @@ html, body {
 
 /* Druckprüfung: unter der Werkzeugleiste rechts, bei offenem Schnitt darunter */
 .print-panel {
-  position: absolute;
-  top: 46px;
-  right: 8px;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -534,12 +574,18 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .print-panel[hidden] { display: none; }
-.section-panel:not([hidden]) ~ .print-panel { top: 84px; }
 .print-head { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .print-head span { flex: 1; }
 .print-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .print-row.muted { color: var(--muted); }
 .print-row.problem { color: var(--error); }
+.print-row.problem .print-link { color: var(--active); }
+.print-link {
+  padding: 0; border: none; background: none; color: var(--active); font: inherit; cursor: pointer;
+}
+.print-link:hover { text-decoration: underline; }
+.print-row.clickable { cursor: pointer; border-radius: 4px; padding: 1px 2px; margin: 0 -2px; }
+.print-row.clickable:hover { background: var(--hover); color: var(--active); }
 .print-swatch { flex: none; width: 10px; height: 10px; border-radius: 3px; }
 .print-swatch.none { background: transparent; }
 .print-angle {

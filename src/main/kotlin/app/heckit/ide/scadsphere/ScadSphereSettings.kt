@@ -61,6 +61,16 @@ object ScadSphereSettings {
         get() = PropertiesComponent.getInstance().getBoolean(ECHO_INLINE_KEY, true)
         set(value) = PropertiesComponent.getInstance().setValue(ECHO_INLINE_KEY, value, true)
 
+    /** Werte gerechneter Zuweisungen am Ende ihrer Zeile im Editor zeigen. */
+    var valuesInline: Boolean
+        get() = PropertiesComponent.getInstance().getBoolean(VALUES_INLINE_KEY, true)
+        set(value) = PropertiesComponent.getInstance().setValue(VALUES_INLINE_KEY, value, true)
+
+    /** Spiel für Passungen in mm (Bausteine für Druck-Hardware: Schraubenlöcher, Mutterfallen, Magnete, …). */
+    var fitClearance: Double
+        get() = PropertiesComponent.getInstance().getValue(FIT_CLEARANCE_KEY)?.toDoubleOrNull()?.takeIf { it in 0.0..2.0 } ?: 0.2
+        set(value) = PropertiesComponent.getInstance().setValue(FIT_CLEARANCE_KEY, value.coerceIn(0.0, 2.0).toString(), "0.2")
+
     /** Druckbett im Viewer zeigen und prüfen, ob das Modell darauf passt. */
     var bedEnabled: Boolean
         get() = PropertiesComponent.getInstance().getBoolean(BED_ENABLED_KEY, true)
@@ -98,6 +108,8 @@ object ScadSphereSettings {
     private const val RENDER_DELAY_KEY = "app.heckit.ide.scadsphere.renderDelay"
     private const val SHOW_PREVIEW_KEY = "app.heckit.ide.scadsphere.showPreview"
     private const val CARET_HIGHLIGHT_KEY = "app.heckit.ide.scadsphere.caretHighlight"
+    private const val VALUES_INLINE_KEY = "app.heckit.ide.scadsphere.valuesInline"
+    private const val FIT_CLEARANCE_KEY = "app.heckit.ide.scadsphere.fitClearance"
     private const val ECHO_INLINE_KEY = "app.heckit.ide.scadsphere.echoInline"
     private const val SHOW_CUSTOMIZER_KEY = "app.heckit.ide.scadsphere.showCustomizer"
 }

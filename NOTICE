@@ -8,7 +8,8 @@ Apache License. They may not be used to identify modified versions or derived
 works without prior written permission.
 
 This product bundles three.js (MIT License, https://github.com/mrdoob/three.js)
-and fflate (MIT License, https://github.com/101arrowz/fflate).
+fflate (MIT License, https://github.com/101arrowz/fflate) and gifenc (MIT License,
+https://github.com/mattdesl/gifenc).
 
 OpenSCAD is a separate application (GPL, https://openscad.org); it is not
 bundled, the plugin runs an installed copy.

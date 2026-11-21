@@ -12,3 +12,4 @@
 11-measure-ring: mounting-plate.scad nocustomizer preview measure:hole:30,9.59,7.41
 12-dimensions: wall-hook.scad nocustomizer preview measure:hole:2.25,2,12 keep dimensions
 13-parts: dresser.obj up:y select:top transform
+14-split-dovetails: key-rack.scad nocustomizer section:x:0.5 call:setSplitConnector="dovetail"

@@ -144,6 +144,10 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         viewer.onNavigate = ::navigate
         viewer.onAction = ::onAction
         viewer.onImage = { saveViewImage(project, file, it) }
+        viewer.onGif = { saveViewImage(project, file, it, "gif") }
+        viewer.onPillars = { pillars -> PrintFixes.insertPillars(project, file, pillars) }
+        viewer.onOrient = { matrix -> PrintFixes.applyOrientation(project, file, matrix) }
+        viewer.setPrintActions(pillars = true, orient = "scad")
         viewer.onSplit = { message ->
             val request = SplitForPrint.Request.of(message)
             val exe = OpenScad.executable()
@@ -305,7 +309,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         viewer.setStatus(ScadSphereBundle.message("preview.rendering"))
         updateTools()
         ApplicationManager.getApplication().executeOnPooledThread {
-            val result = runCatching { render.render(source, text, defines) }
+            val result = runCatching { render.render(source, text, defines, values = ScadSphereSettings.valuesInline) }
             ApplicationManager.getApplication().invokeLater({
                 if (run != generation) return@invokeLater
                 current = null
@@ -384,6 +388,9 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
 
     fun expandMessages() = viewer.expandMessages()
 
+    /** Bild und Zustand der Ansicht (MCP-Werkzeug scad_view). */
+    fun describeView(image: Int) = viewer.describe(image)
+
     /** Aufruf an den Viewer (Screenshot-Helfer). */
     fun invokeViewer(function: String, argument: Any?) = viewer.invoke(function, argument)
 
@@ -407,7 +414,7 @@ class ScadPreviewEditor(private val project: Project, private val file: VirtualF
         caretShown = false
         scheduleCaret()
         dependencies = result.dependencies
-        viewer.setMessages(result.messages)
+        viewer.setMessages(result.messages.filter { it.level != app.heckit.ide.scadsphere.render.RenderMessage.Level.VALUE })
         RenderMessages.getInstance(project).update(this, file, result.messages, stamp)
         val bytes = result.bytes
         when {

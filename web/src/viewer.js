@@ -5,7 +5,7 @@ import {
   AmbientLight, BackSide, Box3, BufferGeometry, Color, DirectionalLight, DoubleSide, EdgesGeometry, Float32BufferAttribute,
   FrontSide, GridHelper, Group, Line, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial, MeshPhongMaterial, Object3D, Points, PointsMaterial,
   OrthographicCamera, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, Scene, ShapeGeometry, ShapePath, Sphere, SphereGeometry,
-  Vector2, Vector3, WebGLRenderer, Euler, Matrix4, Quaternion, CanvasTexture, Sprite, SpriteMaterial, SRGBColorSpace,
+  Vector2, Vector3, WebGLRenderer, Euler, CylinderGeometry, Matrix4, Quaternion, CanvasTexture, Sprite, SpriteMaterial, SRGBColorSpace,
 } from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
@@ -18,7 +18,9 @@ import { PLYLoader } from 'three/addons/loaders/PLYLoader.js'
 import { parseOff } from './offLoader.js'
 import { readFilaments, applyFilaments } from './filaments.js'
 import { findThinWalls } from './thinWalls.js'
-import { sectionSegments, placePins } from './splitPins.js'
+import { sectionSegments, placePins, inside, distanceToSegments, intervalsAlong } from './splitPins.js'
+import { GIFEncoder, quantize, applyPalette } from 'gifenc'
+import { findIslands, bestOrientations, proposeCuts, scoreOrientation } from './printTools.js'
 
 // OpenSCAD und Slicer denken mit Z nach oben.
 Object3D.DEFAULT_UP.set(0, 0, 1)
@@ -41,6 +43,7 @@ const settings = {
   printMaterial: 'PLA',
   printMinWall: 0.8,
   dimensions: false,
+  splitConnector: 'pins',
   ...readStored(),
 }
 
@@ -113,6 +116,7 @@ function requestRender() {
     updateLabelScales()
     renderer.render(scene, camera)
     updateMeasureLabel()
+    updateKeptButtons()
   })
 }
 
@@ -201,7 +205,11 @@ async function load({ url, format, keepCamera, overlayUrl, mtl, resourceBase, fi
     requestRender()
   }
   if (caretUrl) setCaret(caretUrl)
+  for (const resolve of loadWaiters.splice(0)) resolve()
 }
+
+/** Wer auf das nächste geladene Modell wartet (GIF einer Animation) */
+const loadWaiters = []
 
 /**
  * Aufruf an der Schreibmarke im Editor: Das Plugin rechnet ihn getrennt, hier liegt er durchsichtig über dem Modell
@@ -847,7 +855,10 @@ const icons = {
   print: '<path d="M5.5 2h5v2.5l-1.5 2h-2l-1.5-2z"/><path d="M8 6.5v1.5"/><path d="M2 13.5h12M3.5 11h9" />',
   dimensions: '<path d="M2 13.5h12M2 12v3M14 12v3M2.5 2.5v8M1 2.5h3M1 10.5h3"/><rect x="6" y="3" width="6.5" height="6.5" rx=".5" opacity=".6"/>',
   pin: '<path d="M6 2h4l-.6 4 2.1 2.2H4.5L6.6 6z"/><path d="M8 8.2V14"/>',
+  trash: '<path d="M2.5 4.5h11M6.5 4.5V2.8h3v1.7M4 4.5l.7 8.7h6.6l.7-8.7M6.8 7v4M9.2 7v4"/>',
   unpin: '<path d="M6 2h4l-.6 4 2.1 2.2H4.5L6.6 6z"/><path d="M8 8.2V14M2.5 2.5l11 11"/>',
+  turntable: '<ellipse cx="8" cy="11" rx="6" ry="2.2"/><path d="M8 2.5v6M5.5 5h5"/><path d="M12.6 9.2l1.4 1.8-2 .6"/>',
+  film: '<rect x="2" y="3" width="12" height="10" rx="1"/><path d="M5 3v10M11 3v10M2 6h3M2 10h3M11 6h3M11 10h3"/>',
   colors: '<circle cx="5.9" cy="6" r="3.4"/><circle cx="10.1" cy="6" r="3.4"/><circle cx="8" cy="9.8" r="3.4"/>',
 }
 
@@ -925,6 +936,13 @@ function setUp(axis) {
   requestRender()
 }
 
+// Bild der Ansicht als PNG, Drehung um das Modell oder die $t-Animation als GIF
+const imageItems = [
+  { name: 'imagePng', icon: 'image', action: () => host.send({ type: 'image', data: snapshot() }), enabled: () => hasModel },
+  { name: 'gifTurntable', icon: 'turntable', action: () => recordTurntable(), enabled: () => hasModel && !recording },
+  { name: 'gifAnimation', icon: 'film', action: () => recordAnimation(), enabled: () => hasModel && !!timeAnimation && !recording },
+]
+
 // Messen: Abstand (zwei Punkte), Winkel (drei Punkte, der zweite ist der Scheitel), Durchmesser (drei Punkte auf dem Kreis)
 const measureItems = [
   { name: 'measureDistance', icon: 'measure', action: () => setMeasureMode('distance'), isOn: () => measure.on && measure.mode === 'distance' },
@@ -969,7 +987,7 @@ function toolbarEntries() {
     ] : []),
     { name: 'section', action: toggleSection, isOn: () => section.on, enabled: () => hasModel, keep: 2 },
     { name: 'print', action: togglePrint, isOn: () => print.on, enabled: () => hasModel && !modelIsFlat(), keep: 2.5 },
-    { name: 'image', action: () => host.send({ type: 'image', data: snapshot() }), enabled: () => hasModel, keep: 0 },
+    { name: 'image', items: imageItems, enabled: () => hasModel && !recording, keep: 0 },
     ...(tools ? [
       'sep',
       { name: 'render', action: () => host.send({ type: 'action', action: 'render' }), keep: 7 },
@@ -1360,7 +1378,58 @@ const raycaster = new Raycaster()
 const measureLabel = document.createElement('div')
 measureLabel.className = 'measure-label'
 measureLabel.hidden = true
+measureLabel.innerHTML = '<div class="texts"><div class="main"></div><div class="parts"></div></div><button type="button" class="keep"></button>'
 document.body.appendChild(measureLabel)
+// Stecknadel im Schild: Messung behalten, ohne den Umweg über das Lineal-Menü
+const measureKeepButton = measureLabel.querySelector('.keep')
+measureKeepButton.dataset.tip = labels['measure.keepHere'] || 'Keep this measurement'
+measureKeepButton.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round">${icons.pin}</svg>`
+measureKeepButton.addEventListener('pointerdown', (event) => event.stopPropagation())
+measureKeepButton.addEventListener('click', (event) => { event.stopPropagation(); keepMeasure() })
+
+// Behaltene Messungen: Mülleimer neben dem Schild (HTML, steht so nicht im Bild der Ansicht oder im GIF)
+const keptButtons = document.createElement('div')
+keptButtons.className = 'kept-buttons'
+document.body.appendChild(keptButtons)
+
+function updateKeptButtons() {
+  const groups = kept.children
+  while (keptButtons.children.length > groups.length) keptButtons.lastChild.remove()
+  while (keptButtons.children.length < groups.length) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'kept-remove'
+    button.innerHTML = icons.trash ? `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round">${icons.trash}</svg>` : '×'
+    button.dataset.tip = labels['measure.removeKept'] || 'Remove this measurement'
+    button.addEventListener('pointerdown', (event) => event.stopPropagation())
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      const group = kept.children[Number(button.dataset.index)]
+      if (!group) return
+      kept.remove(group)
+      disposeGroup(group)
+      updateToolbar()
+      requestRender()
+    })
+    keptButtons.appendChild(button)
+  }
+  const rect = renderer.domElement.getBoundingClientRect()
+  const at = new Vector3()
+  groups.forEach((group, index) => {
+    const button = keptButtons.children[index]
+    button.dataset.index = String(index)
+    const sprite = group.children.find((child) => child.isSprite)
+    if (!sprite || recording) { button.hidden = true; return }
+    sprite.getWorldPosition(at)
+    const screen = at.project(camera)
+    button.hidden = screen.z > 1
+    // So hoch wie das Schild, quadratisch, mit kleinem Abstand rechts daneben
+    const height = sprite.userData.pixels[1]
+    button.style.width = button.style.height = `${height}px`
+    button.style.left = `${((screen.x + 1) / 2) * rect.width + sprite.userData.pixels[0] / 2 + 3}px`
+    button.style.top = `${((1 - screen.y) / 2) * rect.height}px`
+  })
+}
 
 // Solange Punkte fehlen, steht unten, was zu klicken ist und wie viele Punkte schon gesetzt sind
 const measureHint = document.createElement('div')
@@ -1568,14 +1637,13 @@ function updateMeasureLabel() {
   }
   measure.keepText = text === '–' ? null : text
   measure.keepAnchor = anchor.clone()
-  measureLabel.innerHTML = ''
   measureLabel.classList.toggle('side', measure.mode === 'hole' || measure.mode === 'area')
-  const main = document.createElement('div')
-  main.textContent = text
-  const parts = document.createElement('div')
-  parts.className = 'parts'
-  parts.textContent = detail
-  measureLabel.append(main, parts)
+  // Nur Texte tauschen: Ein neu angelegter Knopf unter dem Zeiger verschluckte sonst den Klick
+  const main = measureLabel.querySelector('.main')
+  const parts = measureLabel.querySelector('.parts')
+  if (main.textContent !== text) main.textContent = text
+  if (parts.textContent !== detail) parts.textContent = detail
+  measureKeepButton.hidden = !measure.keepText
   const middle = anchor.project(camera)
   const rect = renderer.domElement.getBoundingClientRect()
   measureLabel.style.left = `${((middle.x + 1) / 2) * rect.width}px`
@@ -1657,7 +1725,43 @@ function setDimensions(on) {
   updateToolbar()
 }
 
-/** Breite, Tiefe und Höhe als Maßlinien an der Vorderkante, rechts und an der Ecke vorne rechts. */
+/**
+ * Ausdehnung des Modells in den Randvierteln: höchster Punkt im linken und rechten Viertel (X) für die Höhenmaße,
+ * Ausdehnung in X und Y im unteren und oberen Viertel (Z) für Breite und Tiefe.
+ */
+function bandExtents() {
+  const { min, max } = bounds
+  const bandX = (max.x - min.x) * 0.25, bandZ = (max.z - min.z) * 0.25
+  const box = () => ({ x: [Infinity, -Infinity], y: [Infinity, -Infinity] })
+  const result = { left: -Infinity, right: -Infinity, bottom: box(), top: box() }
+  const grow = (b, p) => {
+    if (p.x < b.x[0]) b.x[0] = p.x
+    if (p.x > b.x[1]) b.x[1] = p.x
+    if (p.y < b.y[0]) b.y[0] = p.y
+    if (p.y > b.y[1]) b.y[1] = p.y
+  }
+  const p = new Vector3()
+  model?.traverse((child) => {
+    if (!child.isMesh || !child.visible) return
+    const position = child.geometry.attributes.position
+    if (!position) return
+    child.updateMatrixWorld(true)
+    const step = Math.max(1, Math.floor(position.count / 200000))
+    for (let i = 0; i < position.count; i += step) {
+      p.fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld)
+      if (p.x <= min.x + bandX && p.z > result.left) result.left = p.z
+      if (p.x >= max.x - bandX && p.z > result.right) result.right = p.z
+      if (p.z <= min.z + bandZ) grow(result.bottom, p)
+      if (p.z >= max.z - bandZ) grow(result.top, p)
+    }
+  })
+  if (!Number.isFinite(result.left)) result.left = max.z
+  if (!Number.isFinite(result.right)) result.right = max.z
+  for (const b of [result.bottom, result.top]) if (!Number.isFinite(b.x[0])) Object.assign(b, { x: [min.x, max.x], y: [min.y, max.y] })
+  return result
+}
+
+/** Breite, Tiefe und Höhe als Maßlinien an der Vorderkante, rechts und an der vorderen Ecke der höheren Seite. */
 function buildDimensions() {
   if (dimensions) {
     scene.remove(dimensions)
@@ -1677,25 +1781,51 @@ function buildDimensions() {
     sprite.position.set(x, y, z)
     group.add(sprite)
   }
-  const z = min.z
-  // Breite (X) vor der Vorderkante, mit Hilfslinien von den Ecken
-  const front = min.y - off
-  line(min.x, min.y, z, min.x, front - off * 0.25, z)
-  line(max.x, min.y, z, max.x, front - off * 0.25, z)
-  line(min.x, front, z, max.x, front, z)
-  label(number(size.x), (min.x + max.x) / 2, front, z)
+  const bands = bandExtents()
+  // Ein Maß zählt als eigener Absatz, wenn es deutlich kürzer ist als das ganze (Sockel, schmale Wand oben)
+  const step = (length, full) => length < full * 0.9 && length > full * 0.05
+  // Breite (X) vor der Vorderkante in Höhe [z], mit Hilfslinien von den Ecken
+  const width = (x0, x1, y0, z) => {
+    const front = y0 - off
+    line(x0, y0, z, x0, front - off * 0.25, z)
+    line(x1, y0, z, x1, front - off * 0.25, z)
+    line(x0, front, z, x1, front, z)
+    label(number(x1 - x0), (x0 + x1) / 2, front, z)
+  }
   // Tiefe (Y) rechts daneben
-  const right = max.x + off
-  line(max.x, min.y, z, right + off * 0.25, min.y, z)
-  line(max.x, max.y, z, right + off * 0.25, max.y, z)
-  line(right, min.y, z, right, max.y, z)
-  label(number(size.y), right, (min.y + max.y) / 2, z)
-  // Höhe (Z) an der Ecke vorne rechts (nicht bei flachen Modellen)
-  if (size.z > 1e-9) {
-    const cx = max.x + off * 0.7, cy = min.y - off * 0.7
-    line(max.x, min.y, max.z, cx + off * 0.2, cy - off * 0.2, max.z)
-    line(cx, cy, min.z, cx, cy, max.z)
-    label(number(size.z), cx, cy, (min.z + max.z) / 2)
+  const depth = (y0, y1, x1, z) => {
+    const right = x1 + off
+    line(x1, y0, z, right + off * 0.25, y0, z)
+    line(x1, y1, z, right + off * 0.25, y1, z)
+    line(right, y0, z, right, y1, z)
+    label(number(y1 - y0), right, (y0 + y1) / 2, z)
+  }
+  // Das ganze Maß unten (bzw. oben, wenn das Modell oben breiter ist), das schmalere Viertel zusätzlich
+  const flat = size.z <= 1e-9
+  const topWider = (b) => !flat && b.top.x[1] - b.top.x[0] > b.bottom.x[1] - b.bottom.x[0] + 1e-6
+  const topDeeper = (b) => !flat && b.top.y[1] - b.top.y[0] > b.bottom.y[1] - b.bottom.y[0] + 1e-6
+  const xMainTop = topWider(bands), yMainTop = topDeeper(bands)
+  width(min.x, max.x, min.y, xMainTop ? max.z : min.z)
+  depth(min.y, max.y, max.x, yMainTop ? max.z : min.z)
+  if (!flat) {
+    const other = xMainTop ? bands.bottom : bands.top
+    if (step(other.x[1] - other.x[0], size.x)) width(other.x[0], other.x[1], other.y[0], xMainTop ? min.z : max.z)
+    const otherY = yMainTop ? bands.bottom : bands.top
+    if (step(otherY.y[1] - otherY.y[0], size.y)) depth(otherY.y[0], otherY.y[1], otherY.x[1], yMainTop ? min.z : max.z)
+  }
+  // Höhe (Z) an der vorderen Ecke, auf deren Seite das Modell am höchsten ist; ist die andere Seite deutlich niedriger
+  // (Sockel, Absatz), steht dort deren Höhe (nicht bei flachen Modellen)
+  if (!flat) {
+    const leftMain = bands.left > bands.right + size.z * 1e-3
+    const height = (x, top, outward) => {
+      const cx = x + outward * off * 0.7, cy = min.y - off * 0.7
+      line(x, min.y, top, cx + outward * off * 0.2, cy - off * 0.2, top)
+      line(cx, cy, min.z, cx, cy, top)
+      label(number(top - min.z), cx, cy, (min.z + top) / 2)
+    }
+    height(leftMain ? min.x : max.x, max.z, leftMain ? -1 : 1)
+    const other = leftMain ? bands.right : bands.left
+    if (step(other - min.z, size.z)) height(leftMain ? max.x : min.x, other, leftMain ? 1 : -1)
   }
   const lines = new LineSegments(new BufferGeometry().setFromPoints(points),
     new LineBasicMaterial({ color: theme.dark ? '#c9ccd6' : '#3b3e45', depthTest: false, transparent: true, opacity: 0.8 }))
@@ -1711,6 +1841,7 @@ function keepMeasure() {
   if (!measure.marker || !measure.keepText) return
   const group = measure.marker
   measure.marker = null
+  group.userData.text = measure.keepText
   const sprite = makeLabel(measure.keepText)
   sprite.position.copy(measure.keepAnchor)
   group.add(sprite)
@@ -2614,6 +2745,10 @@ renderer.domElement.addEventListener('pointerup', (event) => {
     }
     return
   }
+  if (!measure.on && pointerDown && event.button === 0 && split.enabled && section.on) {
+    const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y)
+    if (moved <= 4 && editPins(event)) { pointerDown = null; return }
+  }
   if (!measure.on || !pointerDown || event.button !== 0) return
   const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y)
   pointerDown = null
@@ -2638,6 +2773,8 @@ renderer.domElement.addEventListener('pointerup', (event) => {
 // ⌘Z/⇧⌘Z (Strg+Z/Strg+Y): Der eingebettete Browser behält die Tasten, die IDE sieht sie nicht - an das Plugin geben
 document.addEventListener('keydown', (event) => {
   if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+  // In Eingabefeldern (Schnitt, Winkel …) gehört ⌘Z dem Feld
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
   const key = event.key.toLowerCase()
   const redo = (key === 'z' && event.shiftKey) || (key === 'y' && event.ctrlKey && !event.metaKey)
   if (key !== 'z' && !redo) return
@@ -2653,32 +2790,135 @@ document.addEventListener('keydown', (event) => {
 
 // --- Schnitt: Ebene quer zu X, Y oder Z, Schnittfläche gefüllt (Rückseiten in eigener Farbe) ---
 
-const section = { on: false, axis: 'z', flip: false, value: 0, fraction: 0.5 }
+// fileAxis: gewählte Achse der Datei (X/Y/Z wie im Code), axis: die Achse der Szene, auf die sie nach „Achse oben“ fällt
+const section = { on: false, fileAxis: 'z', axis: 'z', flip: false, value: 0, fraction: 0.5 }
 const clipPlane = new Plane(new Vector3(0, 0, -1), 0)
 let caps = null
+
+// Rechte Spalte: Schnitt, Teilen und Druckprüfung untereinander, jedes Feld so hoch wie sein Inhalt
+const rightStack = document.createElement('div')
+rightStack.className = 'right-stack'
+document.body.appendChild(rightStack)
 
 const sectionPanel = document.createElement('div')
 sectionPanel.className = 'section-panel'
 sectionPanel.hidden = true
 sectionPanel.innerHTML = `
   <span class="axes"><button type="button" data-axis="x">X</button><button type="button" data-axis="y">Y</button><button type="button" data-axis="z">Z</button></span>
-  <input type="range" min="0" max="1000" step="1">
-  <span class="value"></span>
+  <input type="range" class="slider" min="0" max="1000" step="1">
+  <label class="value"><span class="axis-name"></span> = <input type="number" class="number" step="0.1"> mm</label>
   <button type="button" class="flip"></button>
   <button type="button" class="split" hidden></button>`
-document.body.appendChild(sectionPanel)
-const sectionSlider = sectionPanel.querySelector('input')
+rightStack.appendChild(sectionPanel)
+const sectionSlider = sectionPanel.querySelector('.slider')
+const sectionNumber = sectionPanel.querySelector('.number')
+sectionNumber.dataset.tip = labels['section.valueTip'] || 'Position of the cut in the coordinates of the file'
 sectionPanel.querySelector('.flip').dataset.tip = labels['section.flip'] || 'Show the other side'
 sectionPanel.querySelector('.flip').innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"><path d="M4 2.5v11M4 13.5 2 11.5M4 13.5l2-2M12 13.5v-11M12 2.5l-2 2M12 2.5l2 2"/></svg>'
 for (const button of sectionPanel.querySelectorAll('[data-axis]')) {
-  button.addEventListener('click', () => { section.axis = button.dataset.axis; section.fraction = 0.5; updateSectionRange(); applySection() })
+  button.addEventListener('click', () => { section.fileAxis = button.dataset.axis; section.fraction = 0.5; updateSectionRange(); applySection() })
+}
+// Wert eintippen (Koordinaten der Datei): Enter oder Verlassen übernimmt, Pfeiltasten schieben um 0,1 mm
+sectionNumber.addEventListener('change', () => {
+  const value = Number(String(sectionNumber.value).replace(',', '.'))
+  if (!Number.isFinite(value)) return updateSectionRange()
+  setSectionFileValue(value)
+})
+sectionNumber.addEventListener('keydown', (event) => { if (event.key === 'Enter') sectionNumber.blur() })
+
+/** Achse der Szene, auf die die Achse [fileAxis] der Datei fällt (Achse oben, Drehungen in 90°-Schritten). */
+function sceneAxisOf(fileAxis) {
+  if (!model) return fileAxis
+  model.updateMatrixWorld(true)
+  const direction = new Vector3().setComponent('xyz'.indexOf(fileAxis), 1).transformDirection(model.matrixWorld)
+  const components = [Math.abs(direction.x), Math.abs(direction.y), Math.abs(direction.z)]
+  return 'xyz'[components.indexOf(Math.max(...components))]
+}
+
+/** Wert der Schnittebene in Koordinaten der Datei (Szene → Datei); ohne Modell unverändert. */
+function sectionFileValue(sceneValue = section.value) {
+  if (!model) return sceneValue
+  const point = new Vector3().setComponent('xyz'.indexOf(section.axis), sceneValue).applyMatrix4(model.matrixWorld.clone().invert())
+  return point.getComponent('xyz'.indexOf(section.fileAxis))
+}
+
+/** Wert in Koordinaten der Datei → Szene. */
+function sectionSceneValue(fileValue) {
+  if (!model) return fileValue
+  return new Vector3().setComponent('xyz'.indexOf(section.fileAxis), fileValue).applyMatrix4(model.matrixWorld).getComponent('xyz'.indexOf(section.axis))
+}
+
+/** Schnitt auf [value] (Koordinaten der Datei) setzen, auf den Umriss begrenzt. */
+function setSectionFileValue(value) {
+  const [min, max] = sectionLimits()
+  const scene = sectionSceneValue(value)
+  section.fraction = max > min ? Math.min(1, Math.max(0, (scene - min) / (max - min))) : 0.5
+  updateSectionRange(scene)
+  applySection()
 }
 sectionPanel.querySelector('.flip').addEventListener('click', () => { section.flip = !section.flip; applySection() })
 const splitButton = sectionPanel.querySelector('.split')
-splitButton.dataset.tip = labels['section.split'] || 'Split here for printing (two parts with pins)…'
 splitButton.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"><circle cx="4" cy="4.5" r="2"/><circle cx="4" cy="11.5" r="2"/><path d="M5.7 5.6 14 11.5M5.7 10.4 14 4.5"/></svg>'
 splitButton.addEventListener('click', () => requestSplit())
-/** Wie ein Klick auf die Schere: Schnitt samt Stiftstellen an das Plugin schicken. */
+
+// Zweites Feld beim Teilen: Verbindung, weitere Schnitte, Vorschlag für das Druckbett, darunter der Hinweis
+const splitPanel = document.createElement('div')
+splitPanel.className = 'section-panel split-panel'
+splitPanel.hidden = true
+splitPanel.innerHTML = `
+  <div class="split-row">
+    <select class="connector"></select>
+    <button type="button" class="add"></button>
+    <span class="cuts"></span>
+    <button type="button" class="clear"></button>
+    <button type="button" class="propose"></button>
+  </div>
+  <div class="hint"></div>`
+rightStack.appendChild(splitPanel)
+const connectorSelect = splitPanel.querySelector('.connector')
+for (const name of ['pins', 'filament', 'pegs', 'dovetail']) {
+  connectorSelect.appendChild(Object.assign(document.createElement('option'), { value: name, textContent: labels[`split.connector.${name}`] || name }))
+}
+connectorSelect.dataset.tip = labels['split.connectorTip'] || 'How the parts are joined'
+connectorSelect.addEventListener('change', () => setSplitConnector(connectorSelect.value))
+/** Verbindung wählen (wie die Auswahl im Feld; auch für Screenshots). */
+function setSplitConnector(name) {
+  split.connector = name
+  connectorSelect.value = name
+  settings.splitConnector = name
+  store()
+  updateSplitMarkers()
+}
+const addCutButton = splitPanel.querySelector('.add')
+const plusIcon = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>'
+const minusIcon = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M3 8h10"/></svg>'
+// + setzt an der Stelle des Reglers einen Schnitt, auf einem Schnitt entfernt − ihn wieder
+addCutButton.addEventListener('click', () => toggleSplitCut())
+/** Wie + bzw. −: Schnitt am Regler setzen oder, wenn dort schon einer ist, entfernen. */
+function toggleSplitCut() {
+  const here = keptCutHere()
+  if (here) {
+    split.cuts.splice(split.cuts.indexOf(here), 1)
+  } else {
+    const cut = split.current?.key === sectionKey() && split.current.cut ? split.current.cut : currentCut()
+    if (cut) split.cuts.push(cut)
+  }
+  updateSplitMarkers()
+}
+const clearCutsButton = splitPanel.querySelector('.clear')
+clearCutsButton.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
+clearCutsButton.dataset.tip = labels['split.clearCuts'] || 'Remove all cuts'
+clearCutsButton.addEventListener('click', () => { split.cuts = []; split.current = null; scheduleSplitPreview(); updateSplitMarkers() })
+const proposeButton = splitPanel.querySelector('.propose')
+proposeButton.textContent = labels['split.propose'] || 'Cuts for the print bed'
+proposeButton.dataset.tip = labels['split.proposeTip'] || 'Cut the model so that every part fits on the print bed'
+proposeButton.addEventListener('click', proposeBedCuts)
+
+// cuts: gesetzte Schnitte (lila). Ohne sie ist die Stelle des Reglers der Schnitt (blau, current).
+const split = { enabled: false, cuts: [], connector: settings.splitConnector || 'pins', current: null, timer: null, markers: null, drag: null }
+connectorSelect.value = split.connector
+
+/** Wie ein Klick auf die Schere: die gesetzten Schnitte (oder der am Regler) samt Stiften an das Plugin schicken. */
 function requestSplit() {
   const request = computeSplit()
   if (request) host.send({ type: 'split', ...request })
@@ -2686,16 +2926,18 @@ function requestSplit() {
 
 /** Das Plugin bietet „Hier teilen“ an (Vorschau einer .scad oder Netzdatei, die OpenSCAD importieren kann). */
 function setSplit(enabled) {
+  split.enabled = !!enabled
   splitButton.hidden = !enabled
+  updateSplitPanel()
+  scheduleSplitPreview()
 }
 
-/**
- * Schnitt für „Hier teilen“ in Koordinaten der Datei: Achse und Lage der Ebene, Ausdehnung und Stifte in der Schnittfläche
- * (Durchmesser 5 mm, bei zu wenig Platz kleiner). Die Szene ist gegenüber der Datei nur um 90°-Schritte gedreht (Achse oben),
- * die Ebene bleibt also achsparallel.
- */
-function computeSplit() {
-  if (!model || !section.on) return null
+/** Dreiecke des Modells in Koordinaten der Datei (für Schnitt und Stifte), gemerkt bis sich das Modell ändert. */
+let fileTrisCache = null
+function fileTriangles() {
+  if (!model) return null
+  const key = `${loadId}:${modelVersion}`
+  if (fileTrisCache?.key === key) return fileTrisCache
   model.updateMatrixWorld(true)
   const toFile = model.matrixWorld.clone().invert()
   const tris = []
@@ -2714,11 +2956,6 @@ function computeSplit() {
     }
   })
   if (!tris.length) return null
-  const sceneAxis = { x: 0, y: 1, z: 2 }[section.axis]
-  const direction = new Vector3().setComponent(sceneAxis, 1).transformDirection(toFile)
-  const components = [Math.abs(direction.x), Math.abs(direction.y), Math.abs(direction.z)]
-  const axis = components.indexOf(Math.max(...components))
-  const value = new Vector3().setComponent(sceneAxis, section.value).applyMatrix4(toFile).getComponent(axis)
   const min = [Infinity, Infinity, Infinity]
   const max = [-Infinity, -Infinity, -Infinity]
   for (let i = 0; i < tris.length; i++) {
@@ -2726,8 +2963,19 @@ function computeSplit() {
     if (tris[i] < min[k]) min[k] = tris[i]
     if (tris[i] > max[k]) max[k] = tris[i]
   }
+  fileTrisCache = { key, tris, min, max, toFile }
+  return fileTrisCache
+}
+
+/**
+ * Schnitt an [value] quer zur Achse [axis] der Datei: Stifte in der Schnittfläche (Durchmesser 5 mm, bei zu wenig Platz
+ * kleiner), Länge höchstens das Anderthalbfache der dünneren Hälfte. Mit den Strecken der Schnittfläche für Klicks.
+ */
+function cutAt(axis, value) {
+  const data = fileTriangles()
+  if (!data) return null
+  const { tris, min, max } = data
   const segments = sectionSegments(tris, axis, value)
-  // Tiefe der Löcher: höchstens drei Viertel der dünneren Hälfte
   const depth = Math.min(value - min[axis], max[axis] - value)
   let pins = []
   let pinD = 5
@@ -2739,11 +2987,279 @@ function computeSplit() {
     if (placed.pins.length) { pins = placed.pins; pinD = d; pinLength = length; break }
   }
   if (!pins.length) pinLength = Math.max(Math.floor(Math.min(20, 1.5 * depth) * 2) / 2, 2)
-  return { axis, value: Math.round(value * 1000) / 1000, min, max, pins, pinD, pinLength }
+  return { axis, value: Math.round(value * 1000) / 1000, pins, pinD, pinLength, segments }
 }
+
+/** Schnitt an der Stelle des Reglers in Koordinaten der Datei (die Ebene bleibt achsparallel). */
+function currentCut() {
+  if (!model || !section.on) return null
+  return cutAt('xyz'.indexOf(section.fileAxis), sectionFileValue())
+}
+
+const keptCutsOnAxis = () => split.cuts.filter((cut) => cut.axis === 'xyz'.indexOf(section.fileAxis))
+/** Gesetzter Schnitt, auf dem der Regler gerade steht. */
+const keptCutHere = () => section.on ? keptCutsOnAxis().find((cut) => Math.abs(cut.value - sectionFileValue()) < 0.01) : undefined
+/** Schnitt, dessen Stifte sich gerade bearbeiten lassen: der gesetzte am Regler, ohne gesetzte der am Regler. */
+function activeCut() {
+  if (!split.enabled || !section.on) return null
+  const here = keptCutHere()
+  if (here) return here
+  if (split.cuts.length) return null
+  return split.current?.key === sectionKey() ? split.current.cut : null
+}
+
+/**
+ * Anfrage für „Hier teilen“: die gesetzten Schnitte, ohne sie der am Regler; Verbindung und Ausdehnung.
+ * Die Felder des ersten Schnitts stehen zusätzlich oben (Format bis 1.8).
+ */
+function computeSplit() {
+  const data = fileTriangles()
+  if (!data || !section.on) return null
+  const cuts = split.cuts.length ? [...split.cuts] : [split.current?.key === sectionKey() && split.current.cut ? split.current.cut : currentCut()].filter(Boolean)
+  if (!cuts.length) return null
+  const strip = ({ axis, value, pins, pinD, pinLength }) => ({ axis, value, pins, pinD, pinLength })
+  const first = strip(cuts[0])
+  return { ...first, min: data.min, max: data.max, cuts: cuts.map(strip), connector: split.connector }
+}
+
+const sectionKey = () => `${loadId}:${modelVersion}:${section.axis}:${section.value}`
+
+/** Stifte des Schnitts am Regler neu suchen, sobald der Regler ruht (nur solange keine Schnitte gesetzt sind). */
+function scheduleSplitPreview() {
+  clearTimeout(split.timer)
+  if (!split.enabled || !section.on || !model) { removeSplitMarkers(); return }
+  split.timer = setTimeout(() => {
+    if (!split.cuts.length && split.current?.key !== sectionKey()) split.current = { key: sectionKey(), cut: currentCut() }
+    updateSplitMarkers()
+  }, 150)
+}
+
+function updateSplitPanel() {
+  splitPanel.hidden = !(split.enabled && section.on && hasModel)
+  const count = split.cuts.length
+  splitPanel.querySelector('.cuts').textContent = count ? (labels['split.cuts'] || 'Cuts: {0}').replace('{0}', String(count)) : ''
+  clearCutsButton.hidden = !count
+  const here = keptCutHere()
+  addCutButton.innerHTML = here ? minusIcon : plusIcon
+  addCutButton.dataset.tip = here ? (labels['split.removeCut'] || 'Remove this cut') : (labels['split.addCut'] || 'Add a cut here, then move the slider to the next one')
+  splitButton.dataset.tip = count
+    ? (labels['section.splitCuts'] || 'Split at the {0} cuts: new .scad file with the parts and their connectors').replace('{0}', String(count))
+    : (labels['section.split'] || 'Split here: new .scad file with the parts and their connectors')
+  const size = hasModel ? bounds.getSize(new Vector3()) : null
+  proposeButton.hidden = !(bed?.enabled && size && (size.x > bed.width || size.y > bed.depth || size.z > bed.height))
+  const dovetail = split.connector === 'dovetail'
+  splitPanel.querySelector('.hint').textContent = activeCut()
+    ? (dovetail ? labels['split.editHintDovetail'] || 'Drag a dovetail to move it, click it to remove it, click the cut face to add one'
+      : labels['split.editHint'] || 'Drag a pin to move it, click it to remove it, click the cut face to add one')
+    : (labels['split.viewHint'] || 'Move the slider onto a cut (purple) to edit it, or add another cut here with +')
+}
+
+function removeSplitMarkers() {
+  if (!split.markers) return
+  scene.remove(split.markers)
+  disposeGroup(split.markers)
+  split.markers = null
+  requestRender()
+}
+
+const DOVETAIL_ANGLE = 15
+const dovetailWidth = (cut) => Math.max(6, 2 * cut.pinD)
+const dovetailDepth = (cut) => Math.min(8, Math.max(3, cut.pinLength / 2))
+
+/** Schwalbenschwänze eines Schnitts wie in der geteilten Datei: an den u-Werten der Stifte, zu nahe beieinander nur einmal. */
+function dovetailsOf(cut) {
+  const width = dovetailWidth(cut)
+  const tails = []
+  const order = cut.pins.map((pin, index) => ({ u: pin[0], index })).sort((a, b) => a.u - b.u)
+  for (const { u, index } of order) {
+    const tail = tails.find((t) => Math.abs(t.u - u) < width * 1.5)
+    if (tail) tail.indices.push(index)
+    else tails.push({ u, indices: [index] })
+  }
+  return tails
+}
+
+/**
+ * Verbindungen der Schnitte in der Szene: lose Stifte und Filament quer durch die Ebene, Zapfen auf der oberen Seite,
+ * Schwalbenschwänze als Keil quer über die Schnittfläche. Gesetzte Schnitte lila mit Umriss, der am Regler blau.
+ */
+function updateSplitMarkers() {
+  removeSplitMarkers()
+  updateSplitPanel()
+  const data = fileTriangles()
+  if (!split.enabled || !section.on || !data) return
+  const group = new Group()
+  const toScene = model.matrixWorld
+  const active = activeCut()
+  const cuts = split.cuts.length ? split.cuts.map((cut) => ({ cut, kept: true })) : (split.current?.cut ? [{ cut: split.current.cut, kept: false }] : [])
+  for (const { cut, kept: isKept } of cuts) {
+    const [ua, va] = [0, 1, 2].filter((a) => a !== cut.axis)
+    const color = isKept ? (cut === active ? '#a68cff' : '#8c6dff') : '#3d8bff'
+    const material = new MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: cut === active ? 0.85 : 0.55 })
+    const normal = new Vector3().setComponent(cut.axis, 1).transformDirection(toScene)
+    const at = (a, u, v) => new Vector3().setComponent(cut.axis, cut.value + a).setComponent(ua, u).setComponent(va, v).applyMatrix4(toScene)
+    if (split.connector === 'dovetail') {
+      const width = dovetailWidth(cut), depth = dovetailDepth(cut)
+      const flare = depth * Math.tan(DOVETAIL_ANGLE * Math.PI / 180)
+      for (const tail of dovetailsOf(cut)) {
+        const spans = intervalsAlong(cut.segments, tail.u)
+        for (const [v0, v1] of spans) {
+          // Keil: an der Schnittfläche [width] breit, in der Tiefe breiter (hält beim Einschieben)
+          const outline = [[0, -width / 2], [depth, -width / 2 - flare], [depth, width / 2 + flare], [0, width / 2]]
+          const corners = []
+          for (const v of [v0, v1]) for (const [a, w] of outline) corners.push(at(a, tail.u + w, v))
+          const geometry = new BufferGeometry().setFromPoints(corners)
+          geometry.setIndex([0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0])
+          const wedge = new Mesh(geometry, new MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: material.opacity, side: DoubleSide }))
+          wedge.renderOrder = 12
+          wedge.userData.pin = { cut, indices: tail.indices, dovetail: true }
+          group.add(wedge)
+        }
+      }
+    } else {
+      const filament = split.connector === 'filament'
+      const d = filament ? 1.75 : cut.pinD
+      // Länge wie in der geteilten Datei: Stift ganz, Filament 12 mm, Zapfen die halbe Stiftlänge nach oben
+      const length = filament ? 12 : split.connector === 'pegs' ? cut.pinLength / 2 : cut.pinLength
+      const shift = split.connector === 'pegs' ? length / 2 : 0
+      for (const [index, [u, v]] of cut.pins.entries()) {
+        const pin = new Mesh(new CylinderGeometry(d / 2, d / 2, Math.max(length, 0.4), 24), material)
+        pin.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), normal)
+        pin.position.copy(at(shift, u, v))
+        pin.renderOrder = 12
+        pin.userData.pin = { cut, indices: [index] }
+        group.add(pin)
+      }
+    }
+    if (isKept) {
+      const lo = [...data.min], hi = [...data.max]
+      const corners = [[lo[ua], lo[va]], [hi[ua], lo[va]], [hi[ua], hi[va]], [lo[ua], hi[va]], [lo[ua], lo[va]]].map(([u, v]) => at(0, u, v))
+      const outline = new Line(new BufferGeometry().setFromPoints(corners), new LineBasicMaterial({ color, depthTest: false }))
+      outline.renderOrder = 12
+      group.add(outline)
+    }
+  }
+  split.markers = group
+  scene.add(group)
+  requestRender()
+}
+
+/** Stelle in der Schnittebene unter dem Zeiger als (u, v) in Koordinaten der Datei, oder null. */
+function cutPointAt(event, cut) {
+  const rect = renderer.domElement.getBoundingClientRect()
+  raycaster.setFromCamera(new Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1), camera)
+  const point = raycaster.ray.intersectPlane(clipPlane, new Vector3())
+  if (!point) return null
+  const filePoint = point.applyMatrix4(fileTriangles().toFile)
+  const [ua, va] = [0, 1, 2].filter((a) => a !== cut.axis)
+  return [filePoint.getComponent(ua), filePoint.getComponent(va)]
+}
+
+/** Verbindung des bearbeitbaren Schnitts unter dem Zeiger. */
+function connectorAt(event) {
+  const cut = activeCut()
+  if (!cut || !split.markers) return null
+  const rect = renderer.domElement.getBoundingClientRect()
+  raycaster.setFromCamera(new Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1), camera)
+  const hit = raycaster.intersectObject(split.markers, true).find((h) => h.object.userData.pin?.cut === cut)
+  return hit ? hit.object.userData.pin : null
+}
+
+/** Darf an (u, v) ein Stift (bzw. ein Schwalbenschwanz) sitzen? */
+function connectorFits(cut, u, v) {
+  if (split.connector === 'dovetail') return intervalsAlong(cut.segments, u).length > 0
+  const d = split.connector === 'filament' ? 1.75 : cut.pinD
+  return inside(cut.segments, u, v) && distanceToSegments(cut.segments, u, v) >= d / 2 + 0.8
+}
+
+/** Klick in die Schnittfläche beim Teilen: Stift (bzw. Schwalbenschwanz) dort setzen. Gibt true zurück, wenn behandelt. */
+function editPins(event) {
+  const cut = activeCut()
+  if (!cut) return false
+  const point = cutPointAt(event, cut)
+  if (!point) return false
+  const [u, v] = point
+  if (split.connector !== 'dovetail' && !inside(cut.segments, u, v)) return false
+  if (!connectorFits(cut, u, v)) return true
+  cut.pins.push([Math.round(u * 100) / 100, Math.round(v * 100) / 100])
+  updateSplitMarkers()
+  return true
+}
+
+// Stift ziehen verschiebt ihn, Klick ohne Ziehen entfernt ihn. Vor OrbitControls (capture), damit die Ansicht stillhält.
+renderer.domElement.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 || measure.on || layFlat.on) return
+  const connector = connectorAt(event)
+  if (!connector) return
+  event.stopImmediatePropagation()
+  event.preventDefault()
+  pointerDown = null
+  renderer.domElement.setPointerCapture(event.pointerId)
+  split.drag = { connector, x: event.clientX, y: event.clientY, moved: false, start: connector.indices.map((i) => [...connector.cut.pins[i]]) }
+}, { capture: true })
+renderer.domElement.addEventListener('pointermove', (event) => {
+  const drag = split.drag
+  if (!drag) {
+    if (split.markers && activeCut() && !measure.on) renderer.domElement.style.cursor = connectorAt(event) ? 'grab' : ''
+    return
+  }
+  if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) <= 4) return
+  drag.moved = true
+  renderer.domElement.style.cursor = 'grabbing'
+  const { cut, indices, dovetail } = drag.connector
+  const point = cutPointAt(event, cut)
+  if (!point) return
+  const [u, v] = point.map((value) => Math.round(value * 100) / 100)
+  if (!connectorFits(cut, u, v)) return
+  if (dovetail) {
+    for (const i of indices) cut.pins[i] = [u, cut.pins[i][1]]
+  } else {
+    cut.pins[indices[0]] = [u, v]
+  }
+  updateSplitMarkers()
+})
+const endPinDrag = (event) => {
+  const drag = split.drag
+  if (!drag) return
+  split.drag = null
+  renderer.domElement.style.cursor = ''
+  if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId)
+  if (!drag.moved && event.type === 'pointerup') {
+    const { cut, indices } = drag.connector
+    for (const i of [...indices].sort((a, b) => b - a)) cut.pins.splice(i, 1)
+    updateSplitMarkers()
+  }
+}
+renderer.domElement.addEventListener('pointerup', endPinDrag)
+renderer.domElement.addEventListener('pointercancel', endPinDrag)
+
+/** Schnitte vorschlagen, damit jedes Teil aufs Bett passt; die Schnittansicht springt zum ersten. */
+function proposeBedCuts() {
+  const data = fileTriangles()
+  if (!data || !bed) return
+  const proposals = proposeCuts(data.min, data.max, [bed.width, bed.depth, bed.height])
+  split.cuts = proposals.map(({ axis, value }) => cutAt(axis, value)).filter(Boolean)
+  if (split.cuts.length) {
+    const first = split.cuts[0]
+    section.fileAxis = 'xyz'[first.axis]
+    section.axis = sceneAxisOf(section.fileAxis)
+    setSectionFileValue(first.value)
+  }
+  updateSplitMarkers()
+}
+
 sectionSlider.addEventListener('input', () => {
   section.fraction = Number(sectionSlider.value) / 1000
-  updateSectionRange()
+  // Nahe an einem behaltenen Schnitt einrasten (dort lassen sich seine Stifte bearbeiten)
+  const [min, max] = sectionLimits()
+  const near = keptCutsOnAxis().map((cut) => sectionSceneValue(cut.value))
+    .find((value) => max > min && Math.abs((value - min) / (max - min) - section.fraction) < 0.008)
+  if (near !== undefined) {
+    section.fraction = (near - min) / (max - min)
+    updateSectionRange(near)
+  } else {
+    updateSectionRange()
+  }
   applySection()
 })
 
@@ -2804,13 +3320,15 @@ function sectionLimits() {
   return [bounds.min[section.axis], bounds.max[section.axis]]
 }
 
-function updateSectionRange() {
+/** Ebene aus fraction (oder genau [exact] in der Szene) berechnen, Regler, Zahl und Achsenknöpfe nachziehen. */
+function updateSectionRange(exact) {
+  section.axis = sceneAxisOf(section.fileAxis)
   const [min, max] = sectionLimits()
-  section.value = min + (max - min) * section.fraction
+  section.value = exact ?? min + (max - min) * section.fraction
   sectionSlider.value = String(Math.round(section.fraction * 1000))
-  const number = (value) => value.toLocaleString(init.locale || undefined, { maximumFractionDigits: 2 })
-  sectionPanel.querySelector('.value').textContent = `${section.axis} = ${number(section.value)} mm`
-  for (const button of sectionPanel.querySelectorAll('[data-axis]')) button.classList.toggle('on', button.dataset.axis === section.axis)
+  sectionPanel.querySelector('.axis-name').textContent = section.fileAxis
+  if (document.activeElement !== sectionNumber) sectionNumber.value = String(Math.round(sectionFileValue() * 100) / 100)
+  for (const button of sectionPanel.querySelectorAll('[data-axis]')) button.classList.toggle('on', button.dataset.axis === section.fileAxis)
 }
 
 function toggleSection() {
@@ -2847,6 +3365,8 @@ function applySection() {
   edges?.traverse((child) => { if (child.material) { child.material.clippingPlanes = planes; child.material.needsUpdate = true } })
   if (section.on && !caps) buildCaps()
   if (!section.on) removeCaps()
+  scheduleSplitPreview()
+  updateSplitPanel()
   requestRender()
 }
 
@@ -2900,13 +3420,22 @@ const FILAMENT_AREA = Math.PI * 0.875 ** 2   // 1,75 mm
 const OVERHANG_COLOR = '#e5484d'
 const CONTACT_COLOR = '#30a46c'
 const THIN_COLOR = '#8e4ec6'
-const print = { on: false, result: null, timer: null }
+const ISLAND_COLOR = '#f76b15'
+const print = { on: false, result: null, timer: null, orientations: null }
+// Was das Plugin mit Ergebnissen der Prüfung anfangen kann: Stützsäulen einfügen (.scad), Lage ändern ('scad' oder 'mesh')
+let printActions = { pillars: false, orient: null }
+
+/** Das Plugin bietet Stützsäulen und das Drehen in eine Lage an ({ pillars, orient }). */
+function setPrintActions(next) {
+  printActions = { pillars: !!next?.pillars, orient: next?.orient || null }
+  if (print.on) renderPrintPanel()
+}
 let printOverlay = null
 
 const printPanel = document.createElement('div')
 printPanel.className = 'print-panel'
 printPanel.hidden = true
-document.body.appendChild(printPanel)
+rightStack.appendChild(printPanel)
 
 /** Druckprüfung von außen ein- oder ausschalten (Screenshot-Helfer). */
 function setPrint(on) {
@@ -2941,6 +3470,7 @@ const modelIsFlat = () => !hasModel || bounds.max.z - bounds.min.z < 1e-9 || tri
 
 function runPrintCheck() {
   removePrintOverlay()
+  print.orientations = null
   print.result = model && !modelIsFlat() ? analyzePrint(model, Number(settings.printAngle) || 45, Number(settings.printMinWall) || 0) : null
   if (print.result) {
     printOverlay = buildPrintOverlay(print.result)
@@ -3012,10 +3542,8 @@ function analyzePrint(object, angle, minWall = 0) {
         n.divideScalar(doubleArea)
         if (sign < 0) n.negate()
         const area = doubleArea / 2
-        if (minWall > 0) {
-          tris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z)
-          normals.push(n.x, n.y, n.z)
-        }
+        tris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z)
+        if (minWall > 0) normals.push(n.x, n.y, n.z)
         const onBed = Math.max(a.z, b.z, c.z) - minZ < flatEps
         if (onBed && n.z < -0.99) {
           contactArea += area
@@ -3045,7 +3573,8 @@ function analyzePrint(object, angle, minWall = 0) {
     thinArea = found.area
     for (const t of found.thin) for (let k = 0; k < 9; k++) thin.push(tris[t * 9 + k])
   }
-  return { volume: Math.abs(volume), overhangArea, contactArea, open, nonManifold, overhang, contact, openEdges, angle, thin, thinArea, minWall }
+  const islands = findIslands(tris, minZ, size)
+  return { volume: Math.abs(volume), overhangArea, contactArea, open, nonManifold, overhang, contact, openEdges, angle, thin, thinArea, minWall, islands, tris, minZ }
 }
 
 function buildPrintOverlay(result) {
@@ -3063,6 +3592,24 @@ function buildPrintOverlay(result) {
   surface(result.contact, CONTACT_COLOR)
   // Dünne Wände über den Überhängen (eine Stelle kann beides sein, die dünne Wand ist das größere Problem)
   surface(result.thin, THIN_COLOR, -4)
+  // Inseln: Kugel an der Unterseite und eine Linie bis aufs Bett (dort fehlt die Stütze)
+  if (result.islands.length) {
+    const material = new MeshBasicMaterial({ color: ISLAND_COLOR, depthTest: false, transparent: true, opacity: 0.9 })
+    const points = []
+    const size = bounds.getSize(new Vector3()).length()
+    for (const island of result.islands) {
+      const marker = new Mesh(new SphereGeometry(Math.max(size * 0.006, Math.min(island.r, size * 0.02)), 16, 12), material)
+      marker.position.set(island.x, island.y, island.z)
+      marker.renderOrder = 11
+      group.add(marker)
+      points.push(island.x, island.y, island.z, island.x, island.y, result.minZ)
+    }
+    const geometry = new BufferGeometry()
+    geometry.setAttribute('position', new Float32BufferAttribute(points, 3))
+    const lines = new LineSegments(geometry, new LineBasicMaterial({ color: ISLAND_COLOR, depthTest: false }))
+    lines.renderOrder = 11
+    group.add(lines)
+  }
   if (result.openEdges.length) {
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new Float32BufferAttribute(result.openEdges, 3))
@@ -3145,6 +3692,20 @@ function renderPrintPanel() {
       thinText.appendChild(document.createTextNode(part))
     }
   }
+  // Inseln: Schicht beginnt in der Luft, dazu Stützsäulen (nur .scad)
+  const islandRow = row(ISLAND_COLOR, escape(result.islands.length ? format('print.islands', 'Starts in mid-air: {0}', result.islands.length) : format('print.islands', 'Starts in mid-air: {0}', labels['print.none'] || 'none')), labels['print.islandsTip'])
+  if (result.islands.length) {
+    islandRow.classList.add('problem')
+    if (printActions.pillars) {
+      const link = Object.assign(document.createElement('button'), { type: 'button', className: 'print-link', textContent: labels['print.pillars'] || 'Add support pillars' })
+      link.dataset.tip = labels['print.pillarsTip'] || ''
+      link.addEventListener('click', addPillars)
+      islandRow.lastChild.appendChild(document.createTextNode(' · '))
+      islandRow.lastChild.appendChild(link)
+    }
+  }
+  renderOrientationRows(row, escape, format)
+
   const closed = result.open === 0 && result.nonManifold === 0
   const edgeText = closed ? (labels['print.closed'] || 'Closed surface')
     : [result.open ? format('print.open', '{0} open edges', result.open) : null, result.nonManifold ? format('print.nonManifold', '{0} edges with more than two faces', result.nonManifold) : null].filter(Boolean).join(' · ')
@@ -3164,6 +3725,75 @@ function renderPrintPanel() {
   select.addEventListener('change', () => { settings.printMaterial = select.value; store(); renderPrintPanel() })
   weightText.appendChild(select)
   weightText.appendChild(document.createTextNode(` ${number(grams, grams < 10 ? 1 : 0)} g · ${number(meters, 2)} m`))
+}
+
+/** Zeile „Beste Lage“: Knopf, danach bis zu drei Vorschläge (Klick dreht das Modell so, wenn das Plugin es kann). */
+function renderOrientationRows(row, escape, format) {
+  const result = print.result
+  const head = row(null, '', labels['print.orientTip'])
+  const button = Object.assign(document.createElement('button'), { type: 'button', className: 'print-link', textContent: labels['print.orient'] || 'Suggest print orientation' })
+  button.addEventListener('click', suggestOrientations)
+  head.lastChild.appendChild(button)
+  if (!print.orientations) return
+  const locale = init.locale || undefined
+  const number = (value, digits = 1) => value.toLocaleString(locale, { maximumFractionDigits: digits })
+  const area = (mm2) => mm2 <= 0 ? '0' : mm2 < 100 ? `${number(mm2, 1)} mm²` : `${number(mm2 / 100, 2)} cm²`
+  const describe = (score) => format('print.orientRow', 'overhangs {0} · on the bed {1} · height {2} mm', area(score.overhang), area(score.contact), number(score.height, 1))
+  const current = print.orientations.current
+  row(null, escape(`${labels['print.orientNow'] || 'Now'}: ${describe(current)}`)).classList.add('muted')
+  print.orientations.list.forEach((score, index) => {
+    const same = Math.abs(score.down[2] + 1) < 1e-6
+    const element = row(null, escape(`${index + 1}. ${same ? (labels['print.orientKeep'] || 'as it is') + ': ' : ''}${describe(score)}`))
+    if (same || !printActions.orient) return
+    element.classList.add('clickable')
+    element.dataset.tip = labels['print.orientApply'] || 'Turn the model into this orientation'
+    element.addEventListener('click', () => applyOrientation(score.down))
+  })
+}
+
+/** Vorschläge für die Drucklage zeigen (wie der Knopf in der Druckprüfung; Screenshot-Helfer). */
+function suggestOrientations() {
+  if (!print.result) return
+  print.orientations = { list: bestOrientations(print.result.tris, print.result.angle), current: scoreOrientation(print.result.tris, [0, 0, -1], print.result.angle) }
+  renderPrintPanel()
+}
+
+/** Modell so drehen, dass [down] (Szenen-Koordinaten) nach unten zeigt: Netzdateien wie „Fläche aufs Bett“, .scad per rotate(). */
+function applyOrientation(down) {
+  const normal = new Vector3(...down).normalize()
+  const turned = turnDown(normal, targetMeshes(true))
+  if (!turned) return
+  print.orientations = null
+  animateLayFlat(turned.meshes, turned.center, turned.turn, turned.lift, () => {
+    if (printActions.orient === 'mesh') host.send({ type: 'transform', part: null, matrix: turned.matrix })
+    else host.send({ type: 'orient', matrix: turned.matrix })
+  })
+}
+
+/** Ab der Unterseite jeder Insel bis zum Material darunter (bzw. aufs Bett): Säulen in Koordinaten der Datei ans Plugin. */
+function addPillars() {
+  const result = print.result
+  if (!result?.islands.length || !model) return
+  model.updateMatrixWorld(true)
+  const toFile = fileRoot()?.matrixWorld.clone().invert() || model.matrixWorld.clone().invert()
+  const down = new Vector3(0, 0, -1)
+  const ray = new Raycaster()
+  const pillars = []
+  for (const island of result.islands) {
+    const start = new Vector3(island.x, island.y, island.z - 0.05)
+    ray.set(start, down)
+    const hit = ray.intersectObject(model, true).find((h) => h.object.isMesh && h.object.visible && h.distance > 0.01)
+    const bottom = hit ? hit.point.z : result.minZ
+    if (island.z - bottom < 1) continue
+    const top = new Vector3(island.x, island.y, island.z).applyMatrix4(toFile)
+    const foot = new Vector3(island.x, island.y, bottom).applyMatrix4(toFile)
+    // Nur wenn Z der Datei auch oben ist (Säulen stehen entlang Z der Datei)
+    if (Math.abs(top.x - foot.x) > 1e-6 || Math.abs(top.y - foot.y) > 1e-6) return
+    // So dick wie die Unterseite (ein Zapfen mit 4 mm bekommt eine 4-mm-Säule), 2 bis 6 mm
+    const d = Math.min(6, Math.max(2, Math.round(island.r * 20) / 10))
+    pillars.push([...[top.x, top.y, foot.z, top.z].map((v) => Math.round(v * 100) / 100), d])
+  }
+  if (pillars.length) host.send({ type: 'pillars', pillars })
 }
 
 let statusTimer = null
@@ -3293,7 +3923,7 @@ function readStored() {
 
 function store() {
   try {
-    localStorage.setItem('scadsphere.settings', JSON.stringify({ colors: settings.colors, edges: settings.edges, grid: settings.grid, ortho: settings.ortho, bed: settings.bed, parts: settings.parts, transformRows: settings.transformRows, transformOrigin: settings.transformOrigin, printAngle: settings.printAngle, printMaterial: settings.printMaterial }))
+    localStorage.setItem('scadsphere.settings', JSON.stringify({ colors: settings.colors, edges: settings.edges, grid: settings.grid, ortho: settings.ortho, bed: settings.bed, parts: settings.parts, transformRows: settings.transformRows, transformOrigin: settings.transformOrigin, printAngle: settings.printAngle, printMaterial: settings.printMaterial, splitConnector: settings.splitConnector }))
   } catch {
     // ohne Speicher eben nur für diese Sitzung
   }
@@ -3305,6 +3935,163 @@ function snapshot() {
   updateLabelScales()
   renderer.render(scene, camera)
   return renderer.domElement.toDataURL('image/png')
+}
+
+// --- GIF: Drehung um das Modell oder die Schritte einer $t-Animation ---
+
+let recording = false
+const recordHint = document.createElement('div')
+recordHint.className = 'measure-hint top'
+recordHint.hidden = true
+document.body.appendChild(recordHint)
+
+/** Aktuelles Bild verkleinert (längere Seite höchstens [maxSide] px) als RGBA. */
+function captureFrame(maxSide) {
+  updateLabelScales()
+  renderer.render(scene, camera)
+  const source = renderer.domElement
+  const scale = Math.min(1, maxSide / Math.max(source.width, source.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(2, Math.round(source.width * scale))
+  canvas.height = Math.max(2, Math.round(source.height * scale))
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  context.fillStyle = theme.bg || '#ffffff'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.drawImage(source, 0, 0, canvas.width, canvas.height)
+  return { data: context.getImageData(0, 0, canvas.width, canvas.height).data, width: canvas.width, height: canvas.height, canvas }
+}
+
+function encodeGif(frames, delay) {
+  const gif = GIFEncoder()
+  for (const frame of frames) {
+    const palette = quantize(frame.data, 256)
+    gif.writeFrame(applyPalette(frame.data, palette), frame.width, frame.height, { palette, delay })
+  }
+  gif.finish()
+  const bytes = gif.bytes()
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return `data:image/gif;base64,${btoa(binary)}`
+}
+
+function showRecordProgress(done, total) {
+  recordHint.hidden = !total
+  recordHint.textContent = (labels['gif.recording'] || 'Recording GIF… {0} / {1}').replace('{0}', String(done)).replace('{1}', String(total))
+}
+
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+
+/** Einmal um das Modell herum (um die Achse nach oben durch den Blickpunkt), 36 Bilder. */
+async function recordTurntable(steps = 36, maxSide = 480) {
+  if (!hasModel || recording) return
+  recording = true
+  updateToolbar()
+  const start = camera.position.clone()
+  const target = controls.target.clone()
+  const frames = []
+  try {
+    for (let i = 0; i < steps; i++) {
+      showRecordProgress(i, steps)
+      const angle = (i / steps) * Math.PI * 2
+      camera.position.copy(start).sub(target).applyAxisAngle(new Vector3(0, 0, 1), angle).add(target)
+      camera.lookAt(target)
+      frames.push(captureFrame(maxSide))
+      await nextFrame()
+    }
+    showRecordProgress(steps, steps)
+    host.send({ type: 'gif', data: encodeGif(frames, 80) })
+  } finally {
+    camera.position.copy(start)
+    camera.lookAt(target)
+    controls.update()
+    recording = false
+    showRecordProgress(0, 0)
+    updateToolbar()
+    requestRender()
+  }
+}
+
+/** Alle Schritte der $t-Animation: das Plugin rechnet jeden Schritt, hier wird er nach dem Laden aufgenommen. */
+async function recordAnimation(maxSide = 480) {
+  if (!timeAnimation || recording) return
+  recording = true
+  updateToolbar()
+  const steps = timeAnimation.steps
+  const back = timeAnimation.frame
+  const frames = []
+  try {
+    for (let i = 0; i < steps; i++) {
+      showRecordProgress(i, steps)
+      const loaded = new Promise((resolve, reject) => {
+        loadWaiters.push(resolve)
+        setTimeout(() => reject(new Error('timeout')), 120000)
+      })
+      host.send({ type: 'animation', action: 'frame', value: i })
+      await loaded
+      await nextFrame()
+      frames.push(captureFrame(maxSide))
+    }
+    showRecordProgress(steps, steps)
+    host.send({ type: 'gif', data: encodeGif(frames, 100) })
+  } catch (error) {
+    host.send({ type: 'error', message: `GIF: ${error.message || error}` })
+  } finally {
+    host.send({ type: 'animation', action: 'frame', value: back })
+    recording = false
+    showRecordProgress(0, 0)
+    updateToolbar()
+  }
+}
+
+// --- Was der Nutzer gerade sieht (MCP-Werkzeug scad_view) ---
+
+/** Blickrichtung als nächstliegende benannte Ansicht und als Vektor von der Kamera zum Blickpunkt. */
+function viewName() {
+  const dir = camera.position.clone().sub(controls.target).normalize()
+  let best = null
+  let bestDot = -2
+  for (const [name, direction] of Object.entries(directions)) {
+    if (name === 'below') continue
+    const dot = direction.clone().normalize().dot(dir)
+    if (dot > bestDot) { bestDot = dot; best = name }
+  }
+  return { name: bestDot > 0.98 ? best : `near ${best}`, direction: dir.toArray().map((v) => Math.round(v * 1000) / 1000) }
+}
+
+/** Bild ([image]: längere Seite in px, 0 = keins) und Zustand der Ansicht an das Plugin. */
+function describe({ id, image }) {
+  const message = { type: 'description', id, hasModel }
+  try {
+    if (hasModel) {
+      const size = bounds.getSize(new Vector3())
+      message.bounds = [bounds.min.toArray(), bounds.max.toArray()].map((v) => v.map((x) => Math.round(x * 1000) / 1000))
+      message.size = size.toArray().map((x) => Math.round(x * 1000) / 1000)
+    }
+    message.view = viewName()
+    message.ortho = settings.ortho
+    message.upAxis = upAxis
+    message.section = section.on ? { axis: section.fileAxis, value: Math.round(sectionFileValue() * 1000) / 1000, flip: section.flip } : null
+    message.kept = kept.children.map((group) => group.userData.text).filter(Boolean)
+    message.measure = measureLabel.hidden ? null : measureLabel.textContent
+    message.dimensions = !!settings.dimensions
+    message.bed = bedProblem()
+    message.selectedPart = selectedPart
+    message.hiddenParts = [...hiddenParts]
+    message.animation = timeAnimation ? { frame: timeAnimation.frame, steps: timeAnimation.steps } : null
+    message.caret = !!caretOverlay
+    message.splitCuts = split.cuts.map(({ axis, value, pins }) => ({ axis: 'xyz'[axis], value, pins: pins.length }))
+    if (print.on && print.result) {
+      const r = print.result
+      message.print = {
+        angle: r.angle, overhangArea: r.overhangArea, contactArea: r.contactArea, islands: r.islands.map(({ x, y, z }) => [x, y, z].map((v) => Math.round(v * 100) / 100)),
+        minWall: r.minWall, thinArea: r.thinArea, openEdges: r.open, nonManifoldEdges: r.nonManifold, volume: r.volume, material: settings.printMaterial,
+      }
+    }
+    if (image > 0 && hasModel) message.image = captureFrame(image).canvas.toDataURL('image/png')
+  } catch (error) {
+    message.error = String(error.message || error)
+  }
+  host.send(message)
 }
 
 /** Zustand für Tests über die DevTools-Schnittstelle. */
@@ -3322,7 +4109,7 @@ function state() {
     measureMode: measure.on ? measure.mode : null,
     measureHint: measureHint.hidden ? null : measureHint.textContent,
     measureText: measureLabel.hidden ? null : measureLabel.textContent,
-    section: section.on ? { axis: section.axis, value: section.value, flip: section.flip } : null,
+    section: section.on ? { axis: section.axis, fileAxis: section.fileAxis, value: section.value, fileValue: sectionFileValue(), flip: section.flip } : null,
     overlay: !!overlay,
     caret: !!caretOverlay,
     palette: palette ? { open: settings.parts && !partsPanel.hidden, part: selectedPart, transform: transformOpen,
@@ -3341,7 +4128,7 @@ function setSection(next) {
     if (section.on) toggleSection()
     return
   }
-  Object.assign(section, { axis: next.axis || 'z', fraction: next.fraction ?? 0.5, flip: !!next.flip })
+  Object.assign(section, { fileAxis: next.axis || 'z', fraction: next.fraction ?? 0.5, flip: !!next.flip })
   if (!section.on) toggleSection()
   updateSectionRange()
   applySection()
@@ -3805,9 +4592,9 @@ function toggleTransform() {
 }
 
 /** Meshes des Ziels: ausgewähltes Teil oder das ganze Modell. */
-function targetMeshes() {
+function targetMeshes(whole = false) {
   const list = []
-  model?.traverse((child) => { if (child.isMesh && (!selectedPart || child.name === selectedPart)) list.push(child) })
+  model?.traverse((child) => { if (child.isMesh && (whole || !selectedPart || child.name === selectedPart)) list.push(child) })
   return list
 }
 
@@ -4078,17 +4865,36 @@ function applyLayFlat(hit) {
   const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
   // Die sichtbare Seite zählt (Netze mit verdrehter Umlaufrichtung)
   if (normal.dot(camera.position.clone().sub(hit.point)) < 0 && !camera.isOrthographicCamera) normal.negate()
-  const down = new Vector3(0, 0, -1)
-  if (normal.dot(down) > 1 - 1e-9) {
+  if (normal.dot(new Vector3(0, 0, -1)) > 1 - 1e-9) {
     showLayFlatResult(labels['transform.layFlatAlready'] || 'This face already lies at the bottom')
     return true
   }
+  const turned = turnDown(normal, targetMeshes())
+  if (!turned) return false
+  const part = selectedPart
+  // Die Drehung erst sichtbar vorführen (bei gleichförmigen Teilen sähe man sonst nichts), dann in die Datei schreiben;
+  // das neu geladene Modell steht genau dort, wo die Vorführung endet
+  animateLayFlat(turned.meshes, turned.center, turned.turn, turned.lift, () => {
+    host.send({ type: 'transform', part, matrix: turned.matrix })
+    showLayFlatResult((labels['transform.layFlatDone'] || 'Turned by {0}° · the face now lies at the bottom').replace('{0}', String(turned.degrees)))
+  })
+  return true
+}
+
+/**
+ * Drehung, die [normal] (Szenen-Koordinaten) nach unten bringt, um die Mitte von [meshes]; der tiefste Punkt bleibt auf seiner
+ * Höhe. Ergebnis mit der Matrix in Koordinaten der Datei (3×4, zeilenweise) oder null.
+ */
+function turnDown(normal, meshes) {
+  const root = fileRoot()
+  if (!root || !meshes.length) return null
+  root.updateMatrixWorld(true)
+  const down = new Vector3(0, 0, -1)
   const turn = new Quaternion().setFromUnitVectors(normal, down)
   const rotation = new Matrix4().makeRotationFromQuaternion(turn)
-  const meshes = targetMeshes()
   const box = new Box3()
   for (const mesh of meshes) box.expandByObject(mesh)
-  if (box.isEmpty()) return false
+  if (box.isEmpty()) return null
   const center = box.getCenter(new Vector3())
   let world = new Matrix4().makeTranslation(center.x, center.y, center.z).multiply(rotation).multiply(new Matrix4().makeTranslation(-center.x, -center.y, -center.z))
   // Tiefster Punkt vorher und nachher (genau über alle Ecken, nicht über den gedrehten Umriss)
@@ -4107,15 +4913,8 @@ function applyLayFlat(hit) {
   const file = root.matrixWorld.clone().invert().multiply(world).multiply(root.matrixWorld)
   const e = file.elements
   const matrix = [0, 1, 2].flatMap((r) => [0, 1, 2, 3].map((c) => e[c * 4 + r]))
-  const part = selectedPart
-  // Die Drehung erst sichtbar vorführen (bei gleichförmigen Teilen sähe man sonst nichts), dann in die Datei schreiben;
-  // das neu geladene Modell steht genau dort, wo die Vorführung endet
   const degrees = Math.round((2 * Math.acos(Math.min(1, Math.abs(turn.w))) * 180) / Math.PI)
-  animateLayFlat(meshes, center, turn, before - after, () => {
-    host.send({ type: 'transform', part, matrix })
-    showLayFlatResult((labels['transform.layFlatDone'] || 'Turned by {0}° · the face now lies at the bottom').replace('{0}', String(degrees)))
-  })
-  return true
+  return { matrix, meshes, center, turn, lift: before - after, degrees }
 }
 
 /** Drehung um [center] mit der Höhenkorrektur [lift] in 450 ms vorführen, danach [done]. */
@@ -4218,7 +5017,7 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   select(hit?.object.name || null)
 })
 
-window.scadSphere = { setSplit, computeSplit, requestSplit, setDimensions, keepMeasure, clearKept, setCaret, load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform, setPrint }
+window.scadSphere = { setSplitConnector, toggleSplitCut, suggestOrientations, proposeBedCuts, describe, recordTurntable, recordAnimation, setPrintActions, setSplit, computeSplit, requestSplit, setDimensions, keepMeasure, clearKept, setCaret, load, setTools, setTheme, setStatus, showEmpty, setMessages, expandMessages, fit, snapshot, state, setBed, setSection, setMeasure, setAnimation, setPalette, previewColor, selectPart, openTransform, setPrint }
 
 if (init.theme) setTheme(init.theme)
 else scene.background = new Color('#f7f8fa')

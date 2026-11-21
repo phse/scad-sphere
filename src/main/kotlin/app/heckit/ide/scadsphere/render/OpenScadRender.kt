@@ -10,7 +10,8 @@ import java.nio.charset.StandardCharsets
 
 /** Meldung von OpenSCAD (ERROR, WARNING, ECHO, TRACE) mit Datei und Zeile, wenn angegeben. */
 data class RenderMessage(val level: Level, val text: String, val file: String?, val line: Int?) {
-    enum class Level { ERROR, WARNING, ECHO, TRACE }
+    /** VALUE: Wert einer Zuweisung für die Anzeige im Editor ([EchoLines]), nicht in der Meldungsliste */
+    enum class Level { ERROR, WARNING, ECHO, TRACE, VALUE }
 }
 
 class RenderResult(
@@ -59,15 +60,15 @@ class OpenScadRender(private val exe: String) {
 
     /**
      * Rechnet [file] (bzw. [text], falls ungespeichert) als 3MF; ist das Ergebnis 2D, als SVG.
-     * [defines]: Werte aus dem Customizer als `name=ausdruck` (`-D`). Blockiert bis OpenSCAD fertig ist - nur im
-     * Hintergrund aufrufen.
+     * [defines]: Werte aus dem Customizer als `name=ausdruck` (`-D`). [values]: Werte der Zuweisungen mitliefern
+     * ([RenderMessage.Level.VALUE]). Blockiert bis OpenSCAD fertig ist - nur im Hintergrund aufrufen.
      */
-    fun render(file: File, text: String?, defines: List<String> = emptyList()): RenderResult {
+    fun render(file: File, text: String?, defines: List<String> = emptyList(), values: Boolean = false): RenderResult {
         val started = System.nanoTime()
         val dir = FileUtil.createTempDirectory("scadsphere", null, true)
         try {
             val extra = defineArguments(defines)
-            val marked = echoMarked(file, text)
+            val marked = echoMarked(file, text, values)
             var run = run(file, marked, File(dir, "model.3mf"), dir, extra)
             if (!cancelled && run.output.any { it.contains("top level object is not a 3D object") }) {
                 run = run(file, marked, File(dir, "model.svg"), dir, extra)
@@ -145,9 +146,9 @@ class OpenScadRender(private val exe: String) {
      * Text für den Lauf der Vorschau: enthält die Datei `echo`, geht sie mit Zeilenmarken über stdin hinein
      * ([EchoLines]), sonst wie bisher ([text] nur, wenn ungespeichert).
      */
-    private fun echoMarked(file: File, text: String?): String? {
+    private fun echoMarked(file: File, text: String?, values: Boolean = false): String? {
         val source = text ?: runCatching { file.readText() }.getOrNull() ?: return null
-        val marked = EchoLines.instrument(source)
+        val marked = EchoLines.instrument(source, values)
         return if (marked == source) text else marked
     }
 
@@ -170,6 +171,8 @@ class OpenScadRender(private val exe: String) {
         val images: Map<String, File>,
         val imageErrors: Map<String, String>,
         val seconds: Double,
+        /** Das gerechnete Netz (STL) für weitere Prüfungen; null ohne 3D-Ergebnis */
+        val mesh: ByteArray? = null,
     )
 
     /**
@@ -184,7 +187,8 @@ class OpenScadRender(private val exe: String) {
             val binary = if (OpenScad.features(exe).binaryStl) listOf("--export-format", "binstl") else emptyList()
             val run = run(file, echoMarked(file, text), File(dir, "model.stl"), dir, arguments + binary)
             val flat = run.output.any { it.contains("top level object is not a 3D object") }
-            val stats = run.target.takeIf { !cancelled && it.isFile && it.length() > 0 }?.let { runCatching { MeshStats.ofStl(it.readBytes()) }.getOrNull() }
+            val mesh = run.target.takeIf { !cancelled && it.isFile && it.length() > 0 }?.readBytes()
+            val stats = mesh?.let { runCatching { MeshStats.ofStl(it) }.getOrNull() }
             val messages = parseMessages(run.output, file).toMutableList()
             val empty = run.output.any { EMPTY.containsMatchIn(it) } && messages.none { it.level == RenderMessage.Level.ERROR }
             val failed = stats == null && !flat && !empty
@@ -205,7 +209,7 @@ class OpenScadRender(private val exe: String) {
                     else errors[view.name] = image.output.lastOrNull { it.isNotBlank() } ?: "no image written"
                 }
             }
-            return CheckResult(messages, failed, empty, flat, stats, images, errors, (System.nanoTime() - started) / 1e9)
+            return CheckResult(messages, failed, empty, flat, stats, images, errors, (System.nanoTime() - started) / 1e9, mesh.takeIf { stats != null })
         } finally {
             FileUtil.delete(dir)
         }
@@ -320,6 +324,9 @@ class OpenScadRender(private val exe: String) {
                 }
             }
             // echo der Datei selbst: Zeile aus der Marke ([EchoLines])
+            if (level == RenderMessage.Level.ECHO) EchoLines.parseValue(text)?.let { (valueLine, value) ->
+                return@mapNotNull RenderMessage(RenderMessage.Level.VALUE, value, file.path, valueLine)
+            }
             if (level == RenderMessage.Level.ECHO) EchoLines.parse(text)?.let { (echoLine, rest) ->
                 text = rest
                 path = file.path

@@ -34,7 +34,7 @@ class RenderMessages(private val project: Project) {
     fun update(owner: Any, source: VirtualFile, messages: List<RenderMessage>, stamp: Long?) {
         val sourcePath = canonical(source.path)
         val marked = messages.asSequence()
-            .filter { it.level == RenderMessage.Level.ERROR || it.level == RenderMessage.Level.WARNING || it.level == RenderMessage.Level.ECHO }
+            .filter { it.level != RenderMessage.Level.TRACE }
             .filter { it.file != null && it.line != null }
             .groupBy { canonical(it.file!!) }
             .mapNotNull { (path, list) ->
@@ -46,6 +46,7 @@ class RenderMessages(private val project: Project) {
             .toMap()
         val old = byOwner.put(owner, marked)
         echoCache.clear()
+        valueCache.clear()
         refresh(source, old.orEmpty().keys + marked.keys)
         old?.values?.flatten()?.forEach { it.marker.dispose() }
     }
@@ -53,6 +54,7 @@ class RenderMessages(private val project: Project) {
     fun clear(owner: Any, source: VirtualFile) {
         val old = byOwner.remove(owner) ?: return
         echoCache.clear()
+        valueCache.clear()
         refresh(source, old.keys)
         old.values.flatten().forEach { it.marker.dispose() }
     }
@@ -60,7 +62,7 @@ class RenderMessages(private val project: Project) {
     /** Gültige Fehler und Warnungen zu [path] aus allen Vorschauen (zwei Vorschauen derselben Datei nur einmal) */
     fun forFile(path: String): List<Marked> {
         val key = canonical(path)
-        return byOwner.values.flatMap { it[key].orEmpty() }.filter { it.marker.isValid && it.message.level != RenderMessage.Level.ECHO }
+        return byOwner.values.flatMap { it[key].orEmpty() }.filter { it.marker.isValid && (it.message.level == RenderMessage.Level.ERROR || it.message.level == RenderMessage.Level.WARNING) }
             .distinctBy { Triple(it.message.level, it.message.text, it.marker.startOffset) }
     }
 
@@ -76,6 +78,16 @@ class RenderMessages(private val project: Project) {
         // Bei zwei Vorschauen derselben Datei reicht eine
         val list = byOwner.values.firstNotNullOfOrNull { messages -> messages[key]?.filter { it.message.level == RenderMessage.Level.ECHO }?.takeIf { it.isNotEmpty() } }
         list.orEmpty().groupBy { it.message.line }.values.map { group -> Echo(group.first().marker, group.map { it.message.text }) }
+    }
+
+    /** Pfad → Werte der Zuweisungen; wie [echoCache]. */
+    private val valueCache = ConcurrentHashMap<String, List<Echo>>()
+
+    /** Werte der Zuweisungen aus dem letzten Lauf für [path] ([RenderMessage.Level.VALUE]), je Zeile, ohne Wiederholungen. */
+    fun values(path: String): List<Echo> = valueCache.computeIfAbsent(path) {
+        val key = canonical(path)
+        val list = byOwner.values.firstNotNullOfOrNull { messages -> messages[key]?.filter { it.message.level == RenderMessage.Level.VALUE }?.takeIf { it.isNotEmpty() } }
+        list.orEmpty().groupBy { it.message.line }.values.map { group -> Echo(group.first().marker, group.map { it.message.text }.distinct()) }
     }
 
     private fun mark(document: Document, message: RenderMessage): Marked? {

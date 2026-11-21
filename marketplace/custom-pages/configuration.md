@@ -12,6 +12,7 @@
 | Pause before rendering | 200–10000 ms | 800 ms |
 | Highlight the call at the caret in the preview | on / off | on |
 | Show echo output at the end of its line | on / off | on |
+| Show the value of computed assignments at the end of their line | on / off | on |
 | Slicer: Application | path to Bambu Studio, OrcaSlicer, PrusaSlicer or UltiMaker Cura | first one found, in this order |
 | Show the print bed in the 3D view | on / off | on |
 | Printer | Bambu Lab X2D, X1 / P1 / A1, A1 mini, H2D · Prusa MK4, Core One, MINI · Creality Ender-3 V3 · Custom size | Bambu Lab X2D |
@@ -23,7 +24,8 @@ Parameter name hints: *Settings | Editor | Inlay Hints | Parameter names*.
 Icon to show a single module in the preview: *Settings | Editor | General | Gutter Icons | Show a single module in the preview*.
 
 Print check in the viewer: the overhang angle, the minimum wall thickness (*Walls under*, 0.8 mm by default, 0 = off) and
-the material are chosen in the panel and remembered.
+the material are chosen in the panel and remembered. The clearance of *Print Hardware…* (0.2 mm by default) is chosen in
+its dialog and remembered.
 
 ## Library lookup
 
@@ -110,6 +112,8 @@ eps = 0.01;
 | Messages | errors and warnings at their line in the code until the next run |
 | Call at the caret | caret on the name or arguments of a module call (not `echo`, `assert`, `let`, `each`, not with `*` or `!`): the call is wrapped in a marker color, one run writes the CSG tree, the marked subtree is rendered separately and shown in blue; the file is not changed |
 | `echo` at the line | every `echo(…)` of the file gets its line as first argument for the preview run (same line, removed from the output); first three values of a line, then the count; not for included files |
+| Values of assignments | computed assignments at the top level and directly in a module body get `echo("@@scadsphere=<line>", name);` behind their semicolon for the preview run; shown as `= value` at the end of the line (different values of a module called several times, first three, then the count). Not for plain numbers, strings or lists of them, function literals, assignments in loops or other blocks, included files |
+| Mid-air spots | lowest points of the surface (connected corners at one height count as one, e.g. a flat bottom) whose neighbors all lie higher, whose faces point down and that are more than 0.1 mm above the bed |
 
 ## Inspections
 
@@ -147,6 +151,20 @@ eps = 0.01;
 | `cust` | Customizer group with a described slider parameter |
 | `hid` | `/* [Hidden] */` with `$fn` |
 
+## Print hardware
+
+*Code | Generate… | Print Hardware…* (⌘N / Alt+Insert) in a `.scad` file inserts the call at the caret (on a line of
+its own if the caret is in code) and the module at the end of the file, once. Holes and pockets reach from z = 0
+downwards and are 1 mm longer upwards, so they cut cleanly through the surface; subtract them with `difference()`.
+
+| Part | Module | Size |
+| --- | --- | --- |
+| Screw hole | `screw_hole(m, length, countersunk, clearance)` | M2–M8: diameter m + 2 × clearance; countersunk head 2 × m (DIN 7991, 90°) |
+| Nut trap | `nut_trap(m, slot, clearance)` | ISO 4032: across flats (M3: 5.5) + 2 × clearance, nut height + clearance; `slot` > 0 opens it towards +X |
+| Heat-set insert | `heat_insert_hole(m)` | M2 3.2 × 4, M2.5 3.6 × 5.7, M3 4 × 5.7, M4 5.6 × 8.1, M5 6.4 × 9.5, M6 8 × 12.7, M8 9.6 × 12.7 mm, 1 mm deeper; no clearance (the insert is melted in) |
+| Magnet pocket | `magnet_pocket(d, h, clearance)` | d + 2 × clearance, h + clearance deep |
+| Snap-fit hook | `snap_hook(length, width, thickness, overhang)` | beam along +Z, hook at the top towards +X, sloped on top; added to the part |
+
 ## Open in Slicer
 
 `.scad` files are exported as 3MF (colors, current Customizer values, last 3MF export options) to the IDE's temp
@@ -163,25 +181,67 @@ folder (`scad-sphere/<file>.3mf`) and opened in the slicer. `.stl`, `.3mf`, `.ob
 | Area | 1 face, Shift+click adds or removes more | area and perimeter |
 
 Corners of the clicked triangle snap within 12 px. Choosing the active mode again or Esc ends measuring.
-*Keep this measurement* leaves the result in the view (with a label), *Remove kept measurements* clears them;
-*Show dimensions* draws width, depth and height at the model. Both also appear in the saved PNG of the view.
+The pin in the label (or *Keep this measurement*) leaves the result in the view, the trash button next to a kept
+label removes it, *Remove kept measurements* clears them all; *Show dimensions* draws width, depth and height at the
+model, plus a dimension of its own for a clearly narrower top or bottom or a clearly lower side. Both also appear in the saved PNG of the view.
+
+## Print check: mid-air spots and orientation
+
+*Starts in mid-air* lists spots where a layer would begin in the air (orange ball with a line down to the bed). In the
+preview of a `.scad`, *Add support pillars* appends once
+
+```
+module support_pillar(x, y, from, to, d = 2, gap = 0.2)
+```
+
+and a call per spot: the pillar stands on the bed or on the part straight below (a ray downwards) with a cone-shaped
+foot of 3 × d, is as thick as the underside of the spot (2 to 6 mm) and ends `gap` below it. A spot with something
+less than 0.6 mm below it no longer counts as mid-air. One undo step; the positions are not updated when the model changes.
+
+*Suggest print orientation* compares the six axes and the normals of the twelve largest flat faces as the side facing
+down. Order: overhang area (in steps of 2 % of the surface), then area on the bed (more first), then height; equivalent
+orientations are listed once, *Now* shows the current one for comparison. A click turns the model around its center and
+keeps its lowest point: mesh files are transformed like *Lay face on bed*, a `.scad` gets the same
+`translate([…]) rotate(…)` before every object at the top level (module calls, `if`, blocks; not `echo`/`assert`).
+Trying another suggestion combines it with the rotation already there, so there is always one.
+
+## Saving the view
+
+The camera button saves the view as PNG, as a turntable GIF (36 frames, one turn around the up axis through the point
+looked at, 80 ms per frame) or, for a file with `$t`, every step of the animation (100 ms per frame). GIFs are at most
+480 px wide or high and are encoded in the viewer.
 
 ## Split for printing
 
-The scissors in the section bar (*Split here for printing*) create `<name>-split.scad` next to the file. It includes the
+The scissors in the section bar (*Split here*) create `<name>-split.scad` next to the file. It includes the
 model (`include` for `.scad` with the current Customizer values, `import()` for `.stl`, `.3mf`, `.obj`, `.off`, `.amf`)
-and shows a part chosen in the Customizer:
+and shows a part chosen in the Customizer.
+
+While the section is on, a second bar shows:
+
+| Control | Effect |
+| --- | --- |
+| Connector | *Loose pins* (printed pins, holes in both parts), *1.75 mm filament* (pieces of filament as dowels), *Pegs on the part* (printed on the lower part, holes in the upper one), *Dovetails* (tongue on the lower part, slot with clearance in the upper one, sliding in along Z, or Y for a cut across Z) |
+| Connectors in the cut face | of the cut at the slider (blue) or of the cuts set (purple): pins and filament across the face, pegs on the upper side, dovetails as wedges. Drag to move, click to remove, click the cut face to add one (a pin needs its radius + 0.8 mm of material) |
+| **+** / **−** | set a cut at the slider; on a cut set, remove it. Once cuts are set, the slider only looks through the model and snaps in on a cut |
+| *Cuts: n* / × | number of cuts set, remove them all |
+| *Cuts for the print bed* | only when the model is larger than the bed: even cuts along every axis that is too long (5 mm margin) |
+
+Parameters of the new file:
 
 | Parameter | Meaning |
 | --- | --- |
-| `part` | `both` (both parts apart by `gap`, with the pins), `lower` (the side with the smaller coordinate), `upper`, `pins` |
-| `cut` | position of the cut on its axis |
-| `pin_d`, `pin_length` | pin size; half of the length goes into each part. Chosen from the section: 5, 4, 3 or 2 mm, wherever there is at least 1.6 mm of material around the hole |
-| `clearance` | extra room in the holes (0.15 mm) |
-| `gap` | space between the parts for `both` |
+| `part` | one cut: `both`, `lower` (smaller coordinates), `upper`; several cuts: `all`, `1`, `2`, … (cells between the cuts, X first); `pins` for loose pins |
+| `connector` | `pins`, `filament`, `pegs`, `dovetail` |
+| `pin_d`, `pin_length` | pin and peg size; half of the length goes into each part. Chosen from the section: 5, 4, 3 or 2 mm, wherever there is at least 1.6 mm of material around the hole |
+| `filament_length` | length of the filament pieces (12 mm), holes 1.75 mm + 2 × clearance |
+| `dovetail_width`, `dovetail_depth` | width at the cut and depth of a dovetail (flank angle 15°); dovetails sit at the pin positions |
+| `clearance` | extra room in holes and slots (0.15 mm) |
+| `gap` | space between the parts for `both`/`all` |
+| `cuts` (hidden) | per cut: axis, position, pin centers, dovetail positions |
 
 Pins sit where the section has the most material, two per connected piece if there is room, so the parts cannot turn.
-They are computed once when splitting: after moving `cut`, check them in the section view. If the model uses `use <…>`
+They are computed once when splitting: after changing a position in `cuts`, check them in the section view. If the model uses `use <…>`
 (not allowed inside a module), the evaluated model is saved as `<name>-split.csg` next to it - split again after
 changing the model. All parts go into one file with *3MF for Multi-Color Print…* by the values of `part`.
 
@@ -202,7 +262,25 @@ with its library folders and backend. Paths are absolute or relative to the proj
 | `scad_export` | `filePath` | string | – | `.scad` file (saved state) |
 | | `targetPath` | string | – | format from the extension: 3mf, stl, obj, off, amf, svg, dxf, pdf |
 | | `parameters`, `parameterSet` | string | – | as for `scad_render` |
+| `scad_print_check` | `filePath`, `parameters`, `parameterSet` | string | – | as for `scad_render` |
+| | `overhangAngle` | double | 45 | 10–80° from vertical |
+| | `minWall` | double | 0.8 | minimum wall thickness in mm, 0 = off |
+| | `material` | string | PLA | PLA, PETG, ABS, ASA, TPU, PA, PC (density for the weight) |
+| `scad_section` | `filePath`, `parameters`, `parameterSet` | string | – | as for `scad_render` |
+| | `axis` | string | `z` | `x`, `y` or `z` |
+| | `position` | string | middle | position of the cut in mm |
+| | `imageSize`, `outputDir` | int, string | 800, temp folder | PNG `<name>-section-<axis>.png` |
+| `scad_view` | `filePath` | string | active editor | an open `.scad` or mesh file |
+| | `imageSize` | int | 1000 | longer side of the PNG, 0 = none |
+| | `outputDir` | string | temp folder | PNG `<name>-view.png` |
 
 `scad_render` returns the result (ok, failed, empty, 2D), size and bounding box in mm, triangle count, volume (cm³) and
 surface (cm²), the overhangs for printing (faces more than 45° from vertical, not on the bed: area, share of the surface,
 height range, lowest point, flat undersides), the messages with their line and the paths of the images.
+
+`scad_print_check` returns overhangs (area, lowest point), mid-air spots with position, radius and height above the bed,
+thin walls (area and up to five spots), the area on the bed, open and non-manifold edges, volume, weight, filament
+length and whether the model fits the print bed from the settings. `scad_section` returns area, perimeter, the number of
+pieces, the extent and the image (hatched, scale bar, axes named). `scad_view` needs the 3D view to be open and visible;
+it returns the picture as displayed and the state: view direction, section, kept measurements, current measurement,
+dimensions, print bed, print check results, selected and hidden parts, animation step and kept cuts.

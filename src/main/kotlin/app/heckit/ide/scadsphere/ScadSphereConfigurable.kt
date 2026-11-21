@@ -87,6 +87,10 @@ class ScadSphereConfigurable : BoundConfigurable(ScadSphereBundle.message("setti
                 checkBox(ScadSphereBundle.message("settings.echoInline")).bindSelected(ScadSphereSettings::echoInline)
                     .comment(ScadSphereBundle.message("settings.echoInline.comment"))
             }
+            row {
+                checkBox(ScadSphereBundle.message("settings.valuesInline")).bindSelected(ScadSphereSettings::valuesInline)
+                    .comment(ScadSphereBundle.message("settings.valuesInline.comment"))
+            }
         }
         group(ScadSphereBundle.message("settings.slicer")) {
             val slicers = Slicer.detect()

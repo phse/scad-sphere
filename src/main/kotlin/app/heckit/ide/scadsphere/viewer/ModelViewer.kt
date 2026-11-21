@@ -77,6 +77,39 @@ class ModelViewer(parent: Disposable) : Disposable {
             call("setSplit", value != null)
         }
 
+    /** Druckprüfung: Stützsäulen einfügen (`[x, y, von, bis]` je Säule, Koordinaten der Datei). */
+    var onPillars: ((List<DoubleArray>) -> Unit)? = null
+
+    /** Druckprüfung: in eine vorgeschlagene Lage drehen (Matrix 3×4, zeilenweise, Koordinaten der Datei). */
+    var onOrient: ((DoubleArray) -> Unit)? = null
+
+    /** Gespeicherte Drehung bzw. Animation als GIF (Bytes). */
+    var onGif: ((ByteArray) -> Unit)? = null
+
+    /** Was die Druckprüfung anbieten darf: Säulen einfügen (.scad) und Drehen (`scad`, `mesh` oder null). */
+    fun setPrintActions(pillars: Boolean, orient: String?) = call("setPrintActions", mapOf("pillars" to pillars, "orient" to orient))
+
+    /** Offene Anfragen an [describe], nach Kennung */
+    private val descriptions = java.util.concurrent.ConcurrentHashMap<Int, java.util.concurrent.CompletableFuture<com.google.gson.JsonObject>>()
+    private val descriptionCounter = AtomicInteger()
+
+    /**
+     * Was der Nutzer gerade sieht: Bild der Ansicht (PNG, Base64-Daten-URL) und Zustand (Blickrichtung, Schnitt, behaltene
+     * Messungen, Druckprüfung, gewähltes Teil). [image]: Größe des Bilds (längere Seite) oder 0 für keins.
+     */
+    fun describe(image: Int): java.util.concurrent.CompletableFuture<com.google.gson.JsonObject> {
+        val id = descriptionCounter.incrementAndGet()
+        val future = java.util.concurrent.CompletableFuture<com.google.gson.JsonObject>()
+        if (browser == null) {
+            future.completeExceptionally(IllegalStateException("no JCEF"))
+            return future
+        }
+        descriptions[id] = future
+        future.whenComplete { _, _ -> descriptions.remove(id) }
+        call("describe", mapOf("id" to id, "image" to image))
+        return future
+    }
+
     /** Klick auf einen Link im Hinweis (z. B. „settings“). */
     var onAction: ((String) -> Unit)? = null
 
@@ -261,6 +294,14 @@ class ModelViewer(parent: Disposable) : Disposable {
                 fileKey?.let { PropertiesComponent.getInstance().setValue(UP_KEY + it, value, defaultUp(shownFormat)) }
             }
             "split" -> onSplit?.invoke(message)
+            "pillars" -> message.get("pillars")?.takeIf { it.isJsonArray }?.asJsonArray
+                ?.mapNotNull { pillar -> pillar.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asDouble }?.toDoubleArray()?.takeIf { it.size == 4 || it.size == 5 } }
+                ?.let { onPillars?.invoke(it) }
+            "orient" -> message.get("matrix")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asDouble }?.takeIf { it.size == 12 }
+                ?.let { onOrient?.invoke(it.toDoubleArray()) }
+            "gif" -> message.get("data")?.asString?.substringAfter("base64,", "")?.takeIf { it.isNotEmpty() }
+                ?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }?.let { onGif?.invoke(it) }
+            "description" -> message.get("id")?.asInt?.let { descriptions[it]?.complete(message) }
             "undo" -> onUndo?.invoke(message.get("redo")?.asBoolean == true)
             "error" -> thisLogger().warn("Viewer: ${message.get("message")}")
         }
@@ -288,6 +329,9 @@ class ModelViewer(parent: Disposable) : Disposable {
         "tool.bed", "tool.bed.none", "tool.measure", "tool.measure.none", "tool.measure.playing", "tool.measureDistance", "tool.measureAngle", "tool.measureDiameter", "tool.measureHole", "measure.holeHint", "measure.noHole", "measure.hole", "measure.pin", "measure.length", "measure.cone", "measure.sphere", "measure.sphereHole", "measure.circumference", "measure.torus", "measure.torusGroove", "measure.outerInner", "measure.tube", "measure.centerline", "tool.measureArea", "measure.areaHint", "measure.perimeter", "measure.areaCount", "measure.planar", "measure.cylinderWall", "measure.coneWall", "measure.sphereWall", "measure.torusWall", "measure.collinear", "tool.section", "tool.section.none",
         "tool.print", "tool.print.none", "print.title", "print.overhang", "print.overhangTip", "print.none", "print.contact", "print.contactTip", "print.closed", "print.open", "print.nonManifold", "print.openTip", "print.solidTip", "print.thin", "print.thinTip", "print.off", "section.split", "tool.dimensions", "tool.dimensions.none", "tool.measureKeep", "tool.measureKeep.none", "tool.measureClearKept", "tool.measureClearKept.none",
         "section.flip", "bed.tooLarge", "bed.outside", "bed.below",
+        "print.islands", "print.islandsTip", "print.pillars", "print.pillarsTip", "print.orient", "print.orientTip", "print.orientRow", "print.orientNow", "print.orientKeep", "print.orientApply",
+        "split.connector.pins", "split.connector.filament", "split.connector.pegs", "split.connector.dovetail", "split.connectorTip", "split.addCut", "split.clearCuts", "split.propose", "split.proposeTip", "split.cuts", "split.editHint", "split.editHintDovetail", "split.viewHint", "split.removeCut", "section.splitCuts", "section.valueTip", "measure.keepHere", "measure.removeKept",
+        "tool.imagePng", "tool.gifTurntable", "tool.gifAnimation", "tool.gifAnimation.none", "gif.recording",
         "tool.image", "tool.image.none", "animation.play", "animation.pause", "animation.steps", "tool.views", "tool.display", "tool.more", "tool.left", "tool.back", "tool.bottom",
         "tool.parts", "tool.parts.none", "parts.title", "parts.pick", "parts.separate", "parts.empty", "parts.create", "parts.count",
         "parts.selected", "parts.renameTip", "parts.hideTip", "parts.deleteTip", "parts.assignTip", "parts.hideAllTip", "parts.search", "parts.noMaterial", "close", "parts.whole", "parts.separateTip", "tool.transform", "transform.title", "transform.move", "transform.rotate", "transform.scale", "transform.rel", "transform.abs", "transform.apply", "transform.absHint.rotate", "transform.absHint.scale", "transform.sync", "transform.origin", "transform.origin.x", "transform.origin.y", "transform.origin.z", "transform.originTip.x", "transform.originTip.y", "transform.originTip.z", "transform.noAbsRotation", "transform.layFlatTip", "transform.layFlatHint", "transform.layFlatDone", "transform.layFlatAlready", "tool.up", "tool.upZ", "tool.upY", "tool.upX",
